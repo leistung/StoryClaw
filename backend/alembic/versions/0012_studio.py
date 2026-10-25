@@ -6,7 +6,17 @@ depends_on=None
 
 def upgrade():
     from alembic import op
-    from app.models.studio import StorySource,SourceChapter,ProjectBaseline,ImportedChapter,StudioTask,ReleaseRecord,PrivateMethod,ModelCall,IndexManifest,ChapterFingerprint,SourceIndex
+    from app.models.studio import StorySource
+    from app.models.studio import SourceChapter
+    from app.models.studio import ProjectBaseline
+    from app.models.studio import ImportedChapter
+    from app.models.studio import StudioTask
+    from app.models.studio import ReleaseRecord
+    from app.models.studio import PrivateMethod
+    from app.models.studio import ModelCall
+    from app.models.studio import IndexManifest
+    from app.models.studio import ChapterFingerprint
+    from app.models.studio import SourceIndex
     for model in (StorySource,SourceChapter,ProjectBaseline,ImportedChapter,StudioTask,ReleaseRecord,PrivateMethod,ModelCall,IndexManifest,ChapterFingerprint,SourceIndex):
         model.__table__.create(op.get_bind(),checkfirst=True)
 

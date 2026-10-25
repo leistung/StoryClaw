@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy import ForeignKey,String,Text,JSON,DateTime,Integer,func
 from sqlalchemy.orm import Mapped,mapped_column
-from .base import Base
+from app.models.base import Base
 class SourceBlob(Base):
     __tablename__='source_blobs'
     source_id:Mapped[str]=mapped_column(ForeignKey('story_sources.id',ondelete='CASCADE'),primary_key=True)
@@ -70,7 +70,7 @@ event.listen(HistoryPrefix.__table__,'after_create',DDL(PREFIX_FUNCTION).execute
 event.listen(HistoryPrefix.__table__,'after_create',DDL('CREATE TRIGGER storyclaw_chapter_fingerprint_delete AFTER DELETE ON chapters FOR EACH ROW EXECUTE FUNCTION storyclaw_chapter_fingerprint()').execute_if(dialect='postgresql'))
 
 # Prefix invalidation triggers must be installed after the base fingerprint table/function.
-from .studio import ChapterFingerprint
+from app.models.studio import ChapterFingerprint
 HistoryPrefix.__table__.add_is_dependent_on(ChapterFingerprint.__table__)
 
 class NarrativeEntity(Base):

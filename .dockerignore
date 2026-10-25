@@ -1,5 +1,6 @@
 .git
 .venv
+**/.venv
 **/__pycache__
 **/*.pyc
 **/node_modules
@@ -8,4 +9,8 @@
 .env.*
 .idea
 .DS_Store
-docs/screenshots
+docs/archive/screenshots
+
+backend/evaluations/runs
+**/build
+**/*.egg-info

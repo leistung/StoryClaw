@@ -6,7 +6,8 @@ depends_on=None
 
 def upgrade():
     from alembic import op
-    from app.models.agent import AgentRun,AgentEvent
+    from app.models.agent import AgentRun
+    from app.models.agent import AgentEvent
     for model in (AgentRun,AgentEvent):model.__table__.create(op.get_bind(),checkfirst=True)
 
 def downgrade():

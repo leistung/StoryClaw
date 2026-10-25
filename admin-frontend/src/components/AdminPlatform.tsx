@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Plus, Trash2, Save, Search } from 'lucide-react'
 
-type Model = { thinking?: 'enabled' | 'disabled' | null; id: string; display_name: string; model?: string; format: string; base_url: string; context_limit?: number; enabled: boolean; has_key?: boolean; api_key?: string; business_only?: boolean }
+type Model = { fallback_models?: string[]; thinking?: 'enabled' | 'disabled' | null; id: string; display_name: string; model?: string; format: string; base_url: string; context_limit?: number; enabled: boolean; has_key?: boolean; api_key?: string; business_only?: boolean }
 export function PlatformOverview() {
   const { data, error } = useQuery({ queryKey: ['admin-overview'], queryFn: async () => (await api.get<Record<string, number>>('/admin/overview')).data })
   if (error) return <Failure error={error} />
@@ -32,6 +32,7 @@ function ModelEditor({ initial }: { initial: { models: Model[]; defaults: Record
       <label className="text-xs text-muted-foreground space-y-2">接口格式<select className="block w-full border rounded-md h-9 px-3 bg-background text-foreground" value={m.format} onChange={e => update(i,{format:e.target.value})}><option value="openai_chat">OpenAI Chat 兼容</option><option value="openai_responses">OpenAI Responses</option><option value="anthropic">Anthropic</option></select></label>
       <label className="text-xs text-muted-foreground space-y-2">API 密钥<Input type="password" autoComplete="new-password" value={m.api_key || ''} onChange={e => update(i,{api_key:e.target.value})} placeholder={m.has_key ? '已加密保存，留空保留' : '输入密钥或使用环境变量'} /></label>
       <label className="text-xs text-muted-foreground space-y-2">思考模式<select aria-label="思考模式" className="block w-full border rounded-md h-9 px-3 bg-background text-foreground" value={m.thinking || ''} onChange={e => update(i,{thinking:(e.target.value || null) as Model['thinking']})}><option value="">使用上游默认值</option><option value="disabled">关闭（用于支持此参数的模型）</option><option value="enabled">开启</option></select></label>
+      <label className="text-xs text-muted-foreground space-y-2">额度不足时降级<select aria-label="额度不足时降级" className="block w-full border rounded-md h-9 px-3 bg-background text-foreground" value={m.fallback_models?.[0] || ''} onChange={e=>update(i,{fallback_models:e.target.value?[e.target.value]:[]})}><option value="">不降级</option>{models.filter(x=>x.id && x.id!==m.id && x.enabled && !x.fallback_models?.length).map(x=><option key={x.id} value={x.id}>{x.display_name}</option>)}</select></label>
     </div></section>)}
     <Button variant="outline" onClick={() => setModels(ms => [...ms,{id:'',display_name:'',format:'openai_chat',base_url:'',enabled:true,context_limit:32000}])}><Plus size={16}/>添加模型</Button>
     <EmbeddingEditor />

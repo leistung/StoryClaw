@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import String,ForeignKey,JSON,DateTime,func
 from sqlalchemy.orm import Mapped,mapped_column
-from .base import Base
+from app.models.base import Base
 class IdeationSession(Base):
     __tablename__='ideation_sessions'
     id:Mapped[str]=mapped_column(String(36),primary_key=True)

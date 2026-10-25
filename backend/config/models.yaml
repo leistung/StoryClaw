@@ -1,0 +1,53 @@
+models:
+- id: glm-4.5-air
+  display_name: GLM-4.5-AIR
+  model: glm-4.5-air
+  format: openai_chat
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  context_limit: 128000
+  thinking: disabled
+  enabled: true
+  business_only: true
+  fallback_models:
+  - glm-5.3-flash
+- id: glm-5.3-flash
+  display_name: GLM-5.3-FLASH
+  model: glm-5.3-flash
+  format: openai_chat
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  context_limit: 128000
+  thinking: enabled
+  enabled: true
+  business_only: true
+  fallback_models: []
+- id: gpt-4o
+  display_name: GPT-4o
+  format: openai_chat
+  base_url: https://api.openai.com/v1
+  context_limit: 128000
+  enabled: false
+  business_only: true
+- id: gpt-4o-mini
+  display_name: GPT-4o Mini
+  format: openai_chat
+  base_url: https://api.openai.com/v1
+  context_limit: 128000
+  enabled: false
+  business_only: true
+- id: claude-3-5-sonnet
+  display_name: Claude 3.5 Sonnet
+  format: anthropic
+  base_url: https://api.anthropic.com
+  context_limit: 200000
+  enabled: false
+  business_only: true
+- id: qwen-max
+  display_name: 通义千问-Max
+  format: openai_chat
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  context_limit: 32000
+  enabled: false
+  business_only: true
+defaults:
+  default_temperature: 0.7
+  default_max_tokens: 8192

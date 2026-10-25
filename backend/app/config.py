@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,7 +32,7 @@ class Settings(BaseSettings):
     mock_payments_enabled: bool = False
     log_level: str = "INFO"
     cors_origins: str = "http://localhost,http://localhost:5173,http://localhost:5174"
-    configs_dir: str = "/app/configs"
+    configs_dir: str = str(Path(__file__).resolve().parents[1] / "config")
     # 商业版本 LLM keys（服务端持有）
     openai_api_key: str = ""
     anthropic_api_key: str = ""

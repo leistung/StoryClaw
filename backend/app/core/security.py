@@ -6,7 +6,7 @@ from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-from ..config import settings
+from app.config import settings
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

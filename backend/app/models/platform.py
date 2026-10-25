@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy import DateTime, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
-from .base import Base
+from app.models.base import Base
 
 class PlatformConfig(Base):
     __tablename__ = "platform_configs"

@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
-from .base import Base
+from app.models.base import Base
 
 class ChapterRevision(Base):
     __tablename__ = 'chapter_revisions'

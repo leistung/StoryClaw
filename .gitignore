@@ -1,4 +1,14 @@
-# Python
+# 本机环境与密钥；仅提交明确的配置样例
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python 环境、字节码与打包产物
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,37 +19,47 @@ venv/
 env/
 *.egg-info/
 .eggs/
-dist/
 build/
+dist/
 
-# Node
+# Python 测试、类型与格式检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# 前端依赖、缓存与生成结果
 node_modules/
-npm-debug.log*
-.npm
+.npm/
 .vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+playwright-report/
+test-results/
 
-# Env & secrets
-.env
-.env.local
-.env.*.local
-*.pem
-*.key
-
-# Data & logs
+# 运行数据、原稿、模型实验输出（源码、fixtures和方法资源继续提交）
+/backend/evaluations/runs/
 data/
 logs/
 *.log
 *.db
 *.sqlite3
-
-# Uploads
 uploads/
+volumes/
 
-# IDE
+# IDE 与系统文件
 .idea/
 .vscode/
 *.swp
+*.swo
 .DS_Store
-
-# Volumes (local dev data)
-volumes/
+Thumbs.db

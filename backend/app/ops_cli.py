@@ -2,10 +2,10 @@
 import argparse,asyncio,json
 async def activity():
     from sqlalchemy import select,func
-    from .database import AsyncSessionLocal
-    from .models.product import WorkJob
-    from .models.agent import AgentRun
-    from .models.studio import StudioTask
+    from app.database import AsyncSessionLocal
+    from app.models.product import WorkJob
+    from app.models.agent import AgentRun
+    from app.models.studio import StudioTask
     async with AsyncSessionLocal() as db:
         counts={}
         for name,model,states in [('jobs',WorkJob,['queued','running']),('runs',AgentRun,['accepted','running']),('plans',StudioTask,['queued','running'])]:
@@ -14,7 +14,7 @@ async def activity():
 async def storage_check():
     from uuid import uuid4
     import hashlib,httpx
-    from .services.blob_store import store
+    from app.services.storage.blob_store import store
     service=store();key='acceptance/'+str(uuid4());data=b'StoryClaw private storage acceptance fixture'
     try:
         await service.put(key,data)
@@ -28,7 +28,7 @@ async def index_check():
     from uuid import uuid4
     from storyclaw.rag import service as rag
     from storyclaw.rag.embedding import _hash_vector
-    from storyclaw.config import settings as agent_settings
+    from storyclaw.config.settings import settings as agent_settings
     from pymilvus import utility
     namespace='acceptance_'+uuid4().hex;pid=-123456789;uid=0
     name=rag._milvus._collection_name(uid,namespace)
@@ -49,15 +49,17 @@ async def index_check():
                 session.run('MATCH (c:Chapter {book_id:$bid}) DETACH DELETE c',bid=namespace).consume()
                 session.run('MATCH (b:Book {user_id:$uid,book_id:$bid}) DETACH DELETE b',uid=uid,bid=namespace).consume()
     return 0
-async def model_check():
+async def model_check(model_id=None):
     """Bounded live inference probe: max 5 platform credits, one text and one embedding request."""
     from sqlalchemy import select
-    from .database import AsyncSessionLocal
-    from .models import User
-    from .main import app,lifespan
-    from .config import settings
-    from .services.metering import usage_scope,price
-    from .services.llm import build_llm_from_choice
+    from app.database import AsyncSessionLocal
+    from app.models import User
+    from app.main import app
+    from app.main import lifespan
+    from app.config import settings
+    from app.services.platform.metering import usage_scope
+    from app.services.platform.metering import price
+    from app.services.platform.llm import build_llm_from_choice
     from storyclaw.workflows.acceptance import model_probe
     settings.workers_enabled=False
     report={'budget':5,'text':False,'embedding':False};meter=None
@@ -71,16 +73,23 @@ async def model_check():
                 if meter.spent+price(model,ins,outs)>5:raise ValueError('Acceptance budget exhausted before supplier call')
                 return await reserve(model,ins,outs)
             meter.reserve=bounded
-            client,model=await build_llm_from_choice({'kind':'business'})
+            client,model=await build_llm_from_choice({'kind':'business', **({'model_id':model_id} if model_id else {})})
             report.update(await model_probe(client,model,meter))
             report['credits_cost']=meter.spent;report['calls']=meter.calls
     print(json.dumps(report,ensure_ascii=False));return 0 if report['text'] and report['embedding'] else 1
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['activity','storage-check','index-check','model-check','migrate-originals']);parser.add_argument('--limit',type=int,default=50);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['activity','storage-check','index-check','model-check','migrate-originals','configure-test-models']);parser.add_argument('--limit',type=int,default=50);parser.add_argument('--model');args=parser.parse_args()
+    if args.action=='configure-test-models':
+        async def configure():
+            from app.database import AsyncSessionLocal
+            from app.services.platform.test_models import configure_test_models
+            async with AsyncSessionLocal() as db:
+                return await configure_test_models(db)
+        print(json.dumps(asyncio.run(configure())));return
     if args.action=='activity':raise SystemExit(asyncio.run(activity()))
     if args.action=='storage-check':raise SystemExit(asyncio.run(storage_check()))
     if args.action=='index-check':raise SystemExit(asyncio.run(index_check()))
-    if args.action=='model-check':raise SystemExit(asyncio.run(model_check()))
-    from .services.blob_store import migrate_originals
+    if args.action=='model-check':raise SystemExit(asyncio.run(model_check(args.model)))
+    from app.services.storage.blob_store import migrate_originals
     print('migrated_sources='+str(asyncio.run(migrate_originals(args.limit))))
 if __name__=='__main__':main()

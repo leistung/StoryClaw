@@ -8,7 +8,8 @@ depends_on = None
 
 def upgrade():
     # create_all was used by the demo: tolerate these new tables already existing.
-    from app.models.platform import PlatformConfig, PlatformEvent
+    from app.models.platform import PlatformConfig
+    from app.models.platform import PlatformEvent
     bind = op.get_bind()
     PlatformConfig.__table__.create(bind, checkfirst=True)
     PlatformEvent.__table__.create(bind, checkfirst=True)

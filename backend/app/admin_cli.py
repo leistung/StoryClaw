@@ -2,9 +2,10 @@
 import argparse
 import asyncio
 from sqlalchemy import select
-from .database import AsyncSessionLocal, engine
-from .models import User
-from .models.platform import PlatformEvent
+from app.database import AsyncSessionLocal
+from app.database import engine
+from app.models import User
+from app.models.platform import PlatformEvent
 
 async def promote(username, password=None):
     try:
@@ -13,13 +14,13 @@ async def promote(username, password=None):
             if not user:
                 if password is None:
                     raise SystemExit('用户不存在，请先注册，或使用 --create 创建账号')
-                from .core.security import hash_password
+                from app.core.security import hash_password
                 if not 6 <= len(password) or len(password.encode('utf-8')) > 72:
                     raise SystemExit('密码至少 6 字符且不超过 72 字节')
                 user = User(username=username, password_hash=hash_password(password), version='business', credits_balance=10000)
                 db.add(user)
                 await db.flush()
-                from .models import CreditsLedger
+                from app.models import CreditsLedger
                 db.add(CreditsLedger(user_id=user.id, delta=10000, reason='开发管理员初始积分', model='admin'))
             elif password is not None:
                 raise SystemExit('账号已存在；不会覆盖密码，请选择新用户名或只提升权限')

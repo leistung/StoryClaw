@@ -79,8 +79,8 @@ def add_request_logging(app: FastAPI) -> None:
             logger.info("request", extra={"data": data})
             if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/v1/admin/logs"):
                 try:
-                    from ..database import AsyncSessionLocal
-                    from ..models.platform import PlatformEvent
+                    from app.database import AsyncSessionLocal
+                    from app.models.platform import PlatformEvent
                     async with AsyncSessionLocal() as db:
                         db.add(PlatformEvent(kind="request", actor_id=request.scope.get("user"),
                             action=request.method, target=safe_path[:255],

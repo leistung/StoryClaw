@@ -6,7 +6,15 @@ depends_on=None
 
 def upgrade():
     from alembic import op
-    from app.models.product import ChapterRevision, WorkJob, Publication, PostModeration, PostComment, PostLike, ContentReport, MembershipOrder, MembershipEntitlement
+    from app.models.product import ChapterRevision
+    from app.models.product import WorkJob
+    from app.models.product import Publication
+    from app.models.product import PostModeration
+    from app.models.product import PostComment
+    from app.models.product import PostLike
+    from app.models.product import ContentReport
+    from app.models.product import MembershipOrder
+    from app.models.product import MembershipEntitlement
     for model in (ChapterRevision,WorkJob,Publication,PostModeration,PostComment,PostLike,ContentReport,MembershipOrder,MembershipEntitlement):
         model.__table__.create(op.get_bind(),checkfirst=True)
 

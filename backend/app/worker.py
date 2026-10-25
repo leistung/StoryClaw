@@ -7,8 +7,9 @@ async def pulse(tasks):
         if any(task.done() for task in tasks):raise RuntimeError('A durable consumer stopped unexpectedly')
         HEARTBEAT.write_text(str(time.time()));await asyncio.sleep(10)
 async def run():
-    from .main import app,lifespan
-    from .config import settings
+    from app.main import app
+    from app.main import lifespan
+    from app.config import settings
     # Reuse exactly the API's dependency injection, with queue startup explicitly enabled.
     settings.workers_enabled=True
     async with lifespan(app):
@@ -18,7 +19,7 @@ def main():
     if args.healthcheck:
         raise SystemExit(0 if HEARTBEAT.exists() and time.time()-HEARTBEAT.stat().st_mtime<45 else 1)
     if args.migrate_originals is not None:
-        from .services.blob_store import migrate_originals
+        from app.services.storage.blob_store import migrate_originals
         print('migrated_sources='+str(asyncio.run(migrate_originals(args.migrate_originals))));return
     asyncio.run(run())
 if __name__=='__main__':main()

@@ -1,117 +1,61 @@
 # StoryClaw
 
-React + FastAPI + LangChain / LangGraph 的 AI 小说创作平台，目前处于 Demo 重构阶段。
-包括作品与章节、AI 写作、知识库、社区、会员及积分页面。充值接口的模拟支付默认关闭，尚未接入真实支付渠道。
+React + FastAPI + LangChain / LangGraph 的 AI 小说创作平台，包含作者端和独立运营中台。支持选题、总纲、逐章规划、正文生成、审阅入库、旧稿接管、连续任务和投稿准备。
 
-## 本地运行
+**当前是开发版本，尚未完成商业上线验收。** 在线支付、外站自动投稿和百万字真实生成质量未验收。具体实现与限制从 [00 阅读导航](docs/00-阅读导航.md) 开始了解。
 
-启动 Docker Desktop，在项目根目录执行：
+## 启动
+
+需要 Docker Engine 和 Compose；macOS 通常使用 Docker Desktop。在仓库根目录执行：
 
 ```bash
-# 仅首次且不存在 .env 时执行，已有配置不要覆盖
+# 仅首次且不存在.env时复制，不覆盖已有配置
 cp -n .env.example .env
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 ```
 
-创作站 http://localhost:5173，独立运营中台 http://localhost:5174，后端文档 http://localhost:8010/docs。
-在 `.env` 中设置 `BACKEND_HOST_PORT`、`FRONTEND_HOST_PORT` 可改变宿主机映射端口；容器内部保持 8000、5173。
-只改变后端宿主机端口时，Docker 前端代理无需修改。
-改变前端端口时同步检查 `.env` 的 `CORS_ORIGINS`。
-本机直接运行前端时使用 `VITE_PROXY_TARGET=http://localhost:8010 npm run dev`（在 frontend 目录执行）。
+- 作者端：<http://localhost:5173>
+- 运营中台：<http://localhost:5174>
+- API 文档：<http://localhost:8010/docs>
+
+先注册账号，再按 [02 本地运行](docs/02-本地运行与配置.md) 设置管理员、文本模型、积分定价和Embedding。没有默认管理员或默认密码。端口以 `.env` 为准，平台模型配置优先读取数据库。
+
+当前 Compose 启动9个服务，使用开发热更新。不是可直接用于正式运营的生产配置；不要为排错删除持久卷。
+
+## 目录
+
+```text
+frontend/         React作者端
+admin-frontend/   React运营中台
+backend/          FastAPI应用、AI包、配置、测试与真实模型实验
+deploy/           Docker、Nginx及启动配置
+docs/             按00—13阅读的现行手册，archive保留历史资料
+```
+
+AI核心位于 `backend/packages/harness/storyclaw`；平台接口位于 `backend/app/gateway`。写作方法随AI包安装，不依赖仓库根目录的额外资源文件夹。
+
+## 从哪里读起
+
+| 目标 | 文档 |
+| --- | --- |
+| 理解项目现状 | [01 项目概览](docs/01-项目概览与实现现状.md) |
+| 启动、注册、端口与热更新 | [02 本地运行](docs/02-本地运行与配置.md) |
+| 阅读目录和每个后端/AI文件 | [03 源码导航](docs/03-源码目录与阅读路线.md) |
+| 理解运行原理和AI机制 | [04 系统架构](docs/04-系统架构与运行原理.md)、[06 Agent与Skill](docs/06-Agent工作流与Skill原理.md) |
+| 理解作者如何写小说 | [05 创作流程](docs/05-作者使用与小说创作流程.md)、[07 上下文记忆](docs/07-上下文记忆与三库设计.md) |
+| 了解上线差距 | [11 部署](docs/11-部署运维与上线准备.md)、[13 限制与路线](docs/13-已知限制与后续路线.md) |
+
+完整目录、推荐顺序和文档可信范围见 [00 阅读导航](docs/00-阅读导航.md)。旧方案与旧实验在 `docs/archive`，不作为当前配置或功能承诺。
+
+## 开发检查
 
 ```bash
-docker compose --env-file .env -f docker/docker-compose.yml ps
-docker compose --env-file .env -f docker/docker-compose.yml logs -f --tail=100 backend
-docker compose --env-file .env -f docker/docker-compose.yml down
+make test           # 离线AI包、后端单元、作者端测试；无付费模型调用
+make docs-check     # 检查现行文档链接、编号及Git忽略规则
+# 提供明确的隔离数据库DATABASE_URL后，才运行全量集成回归
+make test-integration
 ```
 
-首次到 `/register` 注册。账号统一使用平台模型；启动不会自动创建管理员。
-现有 Compose 使用热重载和开发服务器，生产部署方案见重构文档。
-已有数据库的部署不要更换项目名或删除数据卷；`down` 不加 `-v`。
+最近一次代码验收（2026-10-26）：96项Python、4项作者端测试通过；包含模拟模型及隔离数据库，不代表真实文学质量或生产规模验收。本次文档维护只运行文档与忽略规则检查，不重复调用模型。
 
-## 创作流程与架构
-
-主文档：[小说工作流与 AI 架构](docs/NOVEL-WORKFLOW.md)。包含开书所需档案、生成依赖、人工确认、逐章上下文、向量/图谱入库、异常处理及实现边界。索引细节见 [三库设计](docs/KNOWLEDGE-DESIGN.md)。
-
-## 目录与后续方案
-
-- `frontend/`：创作站 React 页面、组件、状态及 API。
-- `admin-frontend/`：独立运营中台，拥有自己的依赖、构建、登录状态及 Docker 服务。
-- `backend/`：FastAPI、业务模型、接口及 Alembic 迁移。
-- `packages/storyclaw/`：Agent 图、工具、上下文及 RAG。
-- `skills/`：写作技能；`configs/`：模型、定价及会员配置。
-- `docker/`：容器编排；`scripts/`：测试脚本。
-
-完整目标架构、实施顺序、验收及迁移方式见 [平台重构方案](docs/REFACTOR-PLAN.md)。
-
-## 统一平台与运营中台
-
-注册后前往登录页，登录后进入工作台。模型由管理员统一配置，不再提供本地版选择。
-旧账号及作品保留，启动会将账号版本归一为平台版本；旧个人模型记录不会自动转换为平台密钥。
-
-先注册自己的账号，再将它设为管理员：
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml exec backend python -m app.admin_cli 你的用户名
-```
-
-运营中台位于独立的 `admin-frontend/` React 应用，在 http://localhost:5174 单独登录，可管理模型、向量模型、定价和会员，查询用户数据、调整积分、查看日志。创作站不再包含后台页面，旧 `/admin` 地址会跳转到独立中台。
-模型先保存，再在定价中配置对应平台编号的积分价格；没有有效定价的模型不允许调用。
-新增表在当前 Demo 启动时自动创建；已有 Alembic 管理的数据库可使用 `0008_platform` 迁移，未建立迁移基线的旧库不要直接盲目执行全量迁移。
-
-模拟支付默认禁用，真实支付尚未接入；当前会员套餐管理不等于已实现支付及会员到期权益闭环。
-数据库仍使用 PostgreSQL + Milvus + Neo4j；见 [小说上下文与三库设计](docs/KNOWLEDGE-DESIGN.md)。
-
-## 开发热更新
-
-首次或依赖变更时构建一次：
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build
-```
-
-之后直接改本机文件：React/样式由 Vite 更新；后端和 Agent Python 代码、技能 Markdown 变更会触发 Uvicorn 自动重载。
-Docker Desktop 使用轮询检测文件变化。后端重载会短暂重启应用进程，正在进行的生成请求可能中断。
-`.env` / Compose 改动需重新 `up -d`；Python/npm 依赖改动需重新构建。数据库表结构变更仍需迁移。
-
-也可以创建一个新的开发管理员（密码通过交互输入，不写入源码）：
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml exec backend python -m app.admin_cli admin --create
-```
-
-
-## Docker 服务精简与双前端
-
-目前共 8 个服务：frontend、admin-frontend、backend、postgres、milvus、neo4j、etcd、minio。
-已移除未使用的 Redis，以及开发环境未使用的可选 Nginx 服务。
-保留 etcd 和 MinIO 是因为当前 Milvus standalone 使用它们存储元数据与对象数据，不能单独删除。
-本次精简不删除业务数据库及知识库卷，也不执行全局 Docker prune。
-
-创作站与中台通过各自的 `/api` 代理访问同一 FastAPI，所有管理接口仍校验管理员权限。
-两站登录互相独立（中台使用 `sc_admin_token`），不会在跨站跳转时传递 Token；退出其中一个不会退出另一个。
-网站分开部署本身不是权限隔离，后端的管理员校验仍是最终边界。
-
-`.env` 配置：
-
-```dotenv
-FRONTEND_HOST_PORT=5173
-ADMIN_HOST_PORT=5174
-ADMIN_PUBLIC_URL=http://localhost:5174
-WRITER_PUBLIC_URL=http://localhost:5173
-```
-
-`*_HOST_PORT` 改变 Docker 映射，`*_PUBLIC_URL` 改变站点跳转链接；更换端口或域名时同步更新。
-两个前端都支持代码和样式热更新。新建中台或修改依赖时执行：
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build --remove-orphans
-```
-
-本地单独开发中台：在 `admin-frontend/` 执行 `npm ci` 和 `npm run dev`，默认代理到 localhost:8010。
-
-智谱 GLM-5.1 / Embedding-3 的接入与开发积分说明见 [GLM 接入说明](docs/GLM-INTEGRATION.md)。
-
-## 长篇小说实测
-
-`novel-lab/` 包含原创小说设定、功能设计、API 测试与可恢复的40章生成脚本。参阅 [实验说明](novel-lab/README.md)、[设计](novel-lab/DESIGN.md) 与 [已核实的样章结果](novel-lab/VALIDATION.md)。运行状态以实验报告为准。
+测试入口与费用边界见 [10 开发测试](docs/10-开发测试与文档维护.md)。真实模型实验放在 `backend/evaluations`，必须显式运行并控制预算；密钥和用户私密正文不进入仓库。

@@ -5,6 +5,14 @@ branch_labels=None
 depends_on=None
 def upgrade():
     from alembic import op
-    from app.models.operations import SourceBlob,CleanupTask,UsageReceipt,ReleaseDelivery,HistoryPrefix,NarrativeEntity,NarrativePolicy,NarrativeFocus,NarrativeFact
+    from app.models.operations import SourceBlob
+    from app.models.operations import CleanupTask
+    from app.models.operations import UsageReceipt
+    from app.models.operations import ReleaseDelivery
+    from app.models.operations import HistoryPrefix
+    from app.models.operations import NarrativeEntity
+    from app.models.operations import NarrativePolicy
+    from app.models.operations import NarrativeFocus
+    from app.models.operations import NarrativeFact
     for model in (SourceBlob,CleanupTask,UsageReceipt,ReleaseDelivery,HistoryPrefix,NarrativeEntity,NarrativePolicy,NarrativeFocus,NarrativeFact):model.__table__.create(op.get_bind(),checkfirst=True)
 def downgrade():raise RuntimeError('Operational receipts require an explicit retention migration.')

@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy import DateTime,ForeignKey,JSON,String,Text,Integer,UniqueConstraint,func
 from sqlalchemy.orm import Mapped,mapped_column
-from .base import Base
+from app.models.base import Base
 
 class AgentRun(Base):
     __tablename__='agent_runs'

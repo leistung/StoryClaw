@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
-from .base import Base
+from app.models.base import Base
 
 
 class Chapter(Base):
@@ -20,5 +20,5 @@ class Chapter(Base):
 
     @property
     def content_hash(self):
-        from ..services.revisions import chapter_hash
+        from app.services.writing.revisions import chapter_hash
         return chapter_hash(self)
