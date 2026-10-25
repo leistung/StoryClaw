@@ -20,6 +20,8 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
     u = await db.get(User, uid)
     if not u:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在")
+    from ..services.platform import refresh_configs
+    await refresh_configs(db)
     # 供请求日志中间件 / 可观测性使用
     request.scope["user"] = u.id
     # 供 embedding 配置解析（RAG 向量化）定位当前用户

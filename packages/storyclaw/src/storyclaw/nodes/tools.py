@@ -33,7 +33,7 @@ WRITER_TOOLS: list[dict[str, Any]] = [
                 "properties": {
                     "entity_type": {
                         "type": "string",
-                        "enum": ["character", "scene", "item", "plot"],
+                        "enum": ["character", "scene", "item", "plot", "world"],
                         "description": "设定类型：角色/场景/物品/情节",
                     },
                     "keyword": {
@@ -112,14 +112,14 @@ async def tool_loop(state: dict[str, Any], sys_prompt: str, user_msg: str) -> st
     chapter_id = state.get("chapter_id")
     try:
         llm, _model_id = await get_llm(mc)
-        llm_tools = llm.bind_tools(WRITER_TOOLS)
+        llm_tools = llm.bind_tools(WRITER_TOOLS).bind(max_tokens=512)
     except Exception as e:  # 模型不支持 tools 等
         log.warning("bind_tools failed, skip tool loop: %s", e)
         return ""
 
     conv: list[Any] = [
         SystemMessage(content=sys_prompt + "\n\n<tool_usage>写作前可调用工具获取必要信息（设定/记忆/大纲/前章）。"
-                                          "先调用工具收集信息，确认信息足够后再直接输出本章正文。</tool_usage>"),
+                                          "先调用工具收集信息，本阶段只收集信息，不撰写正文；资料足够后回复“查询完毕”。</tool_usage>"),
         HumanMessage(content=user_msg),
     ]
     results: list[str] = []

@@ -1,0 +1,76 @@
+# 长篇小说验证实验室
+
+目标：使用现有账号，通过 StoryClaw 的实际 HTTP API 创建并完成原创低玄幻《借火人间》。40 章，每章目标 2800 字，验收范围 2500–3300 个非空白字符，全书至少 100000。另报纯汉字数，避免混淆统计口径。这是原创普通人家庭故事，不模仿具体在世作家的文风。
+
+## 运行
+
+先启动根目录 Docker Compose。无需安装额外 Python 包：脚本使用 Python 3 标准库。
+
+```sh
+python3 novel-lab/run.py --phase audit
+python3 novel-lab/run.py --phase prepare
+python3 novel-lab/run.py --phase write --through 3
+python3 novel-lab/run.py --phase write --through 40
+python3 novel-lab/run.py --phase verify
+```
+
+密码由终端隐藏输入，也可通过 `STORYCLAW_PASSWORD` 环境变量注入；不要把密钥写进脚本。默认 API 为 `http://localhost:8010/api/v1`，用户名 `admin`。`--max-credits 4000` 为本轮平台积分上限，接口未报告的调用不计入该汇总，因此它不是供应商账单的硬上限。不会自动充值。
+
+长任务也可在后台运行，关闭当前聊天不会主动终止该进程：
+
+```sh
+python3 novel-lab/launch.py --through 40
+python3 novel-lab/status.py
+tail -f novel-lab/runs/borrowed-fire-v1/worker.log
+```
+
+后台进程依赖 Mac 开机且不休眠、Docker 与网络持续可用。异常时脚本停止并保存错误，修复后重新启动续跑；不会无限自动重试。这是本机实验进程，不是生产任务调度服务。若手动启动了前台脚本，`worker_alive` 只表示后台 launcher 登记的 PID，不代表所有前台进程。
+
+同一命令可续跑：状态、已验收正文哈希、已完成索引、分析和辅助测试均有检查点。不并发操作同一本书；不要在生成期间重启后端或修改其被热更新监听的代码。网络超时不盲目重试写请求，下一次先检查服务端保存结果。已验收正文被手工修改时会停止，防止继续使用过期上下文。更换设定请指定新的 `--output`。
+
+## 输出
+
+`runs/borrowed-fire-v1/` 已被 Git 忽略，包含：
+
+- `state.json`：书籍与章节 ID、完成标志、检查点和最后错误。
+- `report.json`：实际章数、字数、每章规则检查、当前完成状态。
+- `outline.json`、`plans/`、`prompts/`：大纲、场景任务单和生成提示。
+- `chapters/`、`manuscript.md`：已验收章节与合并稿。
+- `analysis/`、`retrieval/`、`receipts/`：分析、实际检索和 API 回执。
+- `server-export.md`：仅在整本验收通过时下载服务端导出稿。
+- `requests.jsonl`：请求路径、耗时与接口报告用量，不保存登录凭据。
+
+只有 `state.completed` 与 `report.full_manuscript_complete` 都为 true，才表示脚本完成整本结构验收。接口存在、提示词写好、大纲完成和样章完成，都不等于整本完成。
+
+## 单元测试
+
+```sh
+python3 -m unittest discover -s novel-lab/tests -v
+# 大纲分批测试需项目虚拟环境依赖
+.venv/bin/python novel-lab/integration/test_outline_batches.py -v
+```
+
+参阅 [设计](DESIGN.md)、[功能清单](FEATURE-MATRIX.md)、[参考项目](RESEARCH.md)。文学质量、伏笔是否自然、人物是否可信仍需人工审稿。
+
+## 连载工作流真实验收
+
+`serial_smoke.py` 用独立私密样书验证新的“总纲/阶段 → 本章情节确认 → 正文 → 双库索引 → 下一章”流程。默认阶段目标三万字，只先生成四章，不预生成十二章情节。
+
+```bash
+# 密码通过环境变量提供，不写进回执或报告。
+python3 novel-lab/serial_smoke.py --chapters 4 --approve-test-output --probe-impact
+```
+
+运行前设置 `STORYCLAW_PASSWORD`（登录用户默认 admin，可用 `--username` 更换）。`--approve-test-output` 表示明确授权脚本采用测试规划、索引通过基础检查的测试正文，不代表已经进行文学/事实人工验收。脚本会实际调用当前平台模型和 Embedding，默认平台已计积分预算为 300；未计入的平台外成本详见报告限制。
+
+默认输出在 `runs/serial-proof-20261025/`：
+
+- `state.json`：私密样书 ID、任务 ID、请求去重 ID、进度与已记录积分。
+- `receipts/`：每个后台任务的结果回执。
+- `chapters/`、`manuscript.md`：生成正文与合并样稿。
+- `retrieval-*.json`：真实双库检索证据与来源章节。
+- `report.json`：最终完成章数、字数、检查结果和限制。
+
+`--probe-impact` 会临时修改样书第一章，验证后文 pending、章纲 stale 和影响提示，然后恢复原稿并逐章重建索引。已有作品不会修改，不发布样书，不清空数据库。重复执行相同输出目录会恢复原任务，不自动重试失败的付费请求；更换输出目录代表新测试，应谨慎控制用量。
+
+2026-10-25 实际样本：四章共 11,671 字；前三章当前稿 loaded，第四章 pending。上游 embedding 余额/资源包不足（1113），因此真实端到端验收尚未全部完成，见 runs/serial-proof-20261025/report.json。不要删除失败回执后盲目重跑；补足配额后先核对并显式重试失败索引。`snapshot_serial_sample.py` 可以只读导出当前样本，不调用模型。

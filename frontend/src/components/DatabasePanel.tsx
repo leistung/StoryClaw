@@ -1,3 +1,5 @@
+import { enqueueJob } from '@/lib/jobs'
+import { toast } from 'sonner'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Database, Search, Boxes, Network, RefreshCw, Loader2 } from 'lucide-react'
@@ -27,15 +29,22 @@ export default function DatabasePanel({ bookId, onError }: Props) {
   // RAG 入库状态
   const { data: status, isLoading: statusLoading, refetch } = useQuery({
     queryKey: ['rag-status', bookId],
+    refetchInterval:5000,
     queryFn: async () => (await api.get<RagStatus>(`/books/${bookId}/rag-status`)).data,
     enabled: !!bookId,
   })
 
   // 入库单章
   const ingestMutation = useMutation({
-    mutationFn: async (chapterId: number) =>
-      (await api.post(`/chapters/${chapterId}/ingest`)).data,
-    onSuccess: () => {
+    mutationFn: async (chapterId: number) => {
+      const chapter=(await api.get(`/chapters/${chapterId}`)).data
+      if(!window.confirm(`确认已审阅《${chapter.title}》的当前正文，并将其作为后续章节的故事记忆？修改正文后需要重新更新。`))return
+      return enqueueJob({book_id:bookId,chapter_id:chapterId,kind:"index",reviewed_hash:chapter.content_hash})
+    },
+    onSuccess: (job) => {
+      if(!job)return
+      toast.success('记忆更新已排队，请在任务中心查看结果')
+      qc.invalidateQueries({ queryKey: ['jobs', bookId] })
       qc.invalidateQueries({ queryKey: ['rag-status', bookId] })
       qc.invalidateQueries({ queryKey: ['chapters', bookId] })
     },
@@ -67,7 +76,7 @@ export default function DatabasePanel({ bookId, onError }: Props) {
       {/* 头部：标题 + 统计 */}
       <div className="bg-background border-b px-4 py-3 flex items-center gap-3">
         <Database size={18} className="text-primary" />
-        <span className="font-medium">RAG 数据库</span>
+        <span className="font-medium">故事记忆</span>
         <span className="text-xs text-muted-foreground">
           已入库 <span className="text-primary font-medium">{ingestedChapters}</span> / {totalChapters} 章
         </span>
@@ -217,7 +226,7 @@ function ChunksTab({
                   <Button size="sm" className="h-6 text-xs bg-purple-600 hover:bg-purple-700 text-white"
                     onClick={() => onIngest(c.chapter_id)}
                     disabled={ingesting}>
-                    入库
+                    确认并入库
                   </Button>
                 )}
                 {c.ingested && (

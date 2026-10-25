@@ -54,10 +54,8 @@ class Neo4jStore:
         """入库实体与关系，返回 (实体数, 关系数)。同名实体跨章节合并。"""
         if not self.connect():
             return 0, 0
-        if not entities:
-            return 0, 0
         try:
-            with self._driver.session() as s:
+            with self._driver.session() as session, session.begin_transaction() as s:
                 s.run(
                     "MERGE (u:User {user_id:$user_id}) "
                     "MERGE (b:Book {book_id:$book_id, user_id:$user_id}) "
@@ -70,6 +68,10 @@ class Neo4jStore:
                 s.run(
                     "MATCH (c:Chapter {book_id:$book_id, chapter_id:$chapter_id})<-[r:APPEARS_IN]-() DELETE r",
                     book_id=book_id, chapter_id=chapter_id,
+                )
+                s.run(
+                    "MATCH (a:StoryEntity {user_id:$user_id, book_id:$book_id})-[r:REL {chapter_id:$chapter_id}]->() DELETE r",
+                    user_id=user_id, book_id=book_id, chapter_id=chapter_id,
                 )
                 ent_count = 0
                 for ent in entities:
@@ -113,12 +115,12 @@ class Neo4jStore:
     def query_related(self, user_id: int, book_id: int, query_text: str, limit: int = 8) -> dict:
         """匹配实体 + 一跳关系。"""
         if not self.connect():
-            return {"entities": [], "relations": []}
+            raise RuntimeError('Neo4j 不可用')
         try:
             with self._driver.session() as s:
                 rows = s.run(
                     "MATCH (e:StoryEntity {user_id:$user_id, book_id:$book_id}) "
-                    "WHERE e.name CONTAINS $q OR e.description CONTAINS $q "
+                    "WHERE e.name CONTAINS $q OR (size(e.name) >= 2 AND $q CONTAINS e.name) OR e.description CONTAINS $q "
                     "OPTIONAL MATCH (e)-[ap:APPEARS_IN]->(c:Chapter) "
                     "RETURN e.name AS name, e.entity_type AS type, e.description AS description, "
                     "c.chapter_id AS chapter_id LIMIT $limit",
@@ -150,7 +152,7 @@ class Neo4jStore:
                 return {"entities": entities, "relations": relations}
         except Exception as e:
             log.warning("Neo4j query 失败: %s", e)
-            return {"entities": [], "relations": []}
+            raise RuntimeError('Neo4j 检索失败') from e
 
     def book_graph(self, user_id: int, book_id: int, limit: int = 200) -> dict:
         """整本书图谱（数据库页展示用）。"""

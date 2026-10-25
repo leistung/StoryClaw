@@ -18,6 +18,12 @@ async def reviewer(state: AgentState) -> dict:
     modify_req = state.get("modify_request") or ""
     active_skill = state.get("active_skill") or ""
 
+    # Fragment operations must not be expanded to the whole chapter's target.
+    if active_skill in ("continue-writing", "polish-chapter"):
+        return {"review_feedback": f"片段完成（{actual}字）", "review_round": round_n,
+                "messages": [{"role": "assistant", "content": draft}],
+                "status": "finished" if draft.strip() else "error"}
+
     # modify 模式：用 LLM 检查修改要求是否满足
     if modify_req and active_skill == "modify-chapter" and round_n < 2:
         try:
@@ -34,12 +40,17 @@ async def reviewer(state: AgentState) -> dict:
         except Exception:
             pass  # LLM 检查失败，降级为字数检查
 
+    from ..continuity import repetition_evidence
+    reuse=repetition_evidence(draft,ctx.get('recent_chapter_text',''))
+    if reuse['warning'] and round_n<2:
+        return {'review_feedback':f"跨章重复风险：与上章出现连续{reuse['max_run']}字、累计{reuse['reused_chars']}字长片段复用。不要重演上章已完成的交易、发现或对话，保留本章新事件并完整重写",'review_round':round_n,'status':'review_retry'}
+
     # 字数自检
-    if actual < target * 0.8 and round_n < 2:
-        return {"review_feedback": f"字数不足：当前 {actual} 字，目标 {target} 字，请扩写",
+    if not target * 0.9 <= actual <= target * 1.18 and round_n < 2:
+        return {"review_feedback": f"字数偏离目标：当前 {actual} 字，目标 {target} 字。输出接近目标的完整版本；过长则压缩且保留全部本章事件，过短则补充动作与对话",
                 "review_round": round_n, "status": "review_retry"}
     return {
-        "review_feedback": f"通过（{actual}/{target} 字）",
+        "review_feedback": (f"跨章重复风险（最长{reuse['max_run']}字，累计{reuse['reused_chars']}字），请人工核对。" if reuse['warning'] else "") + (f"字数符合目标（{actual}/{target} 字）" if target * 0.9 <= actual <= target * 1.18 else f"字数偏离目标（{actual}/{target} 字），请继续修订"),
         "review_round": round_n,
         "messages": [{"role": "assistant", "content": draft[:200] + "...(章节已生成)"}],
         "status": "finished",

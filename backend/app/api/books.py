@@ -64,6 +64,8 @@ async def list_books(u: User = Depends(get_current_user), db: AsyncSession = Dep
 
 @router.post("", response_model=BookOut)
 async def create_book(data: BookCreateIn, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if data.generate_outline or data.generate_plots or data.generate_characters:
+        raise HTTPException(400,'请先创建作品，再在工作台逐步发起任务并确认大纲；开书时不再自动生成内容')
     b = Book(
         user_id=u.id, title=data.title, intro=data.intro, genre=data.genre,
         platforms=json.dumps(data.platforms, ensure_ascii=False), cover_url=data.cover_url,
@@ -74,13 +76,6 @@ async def create_book(data: BookCreateIn, u: User = Depends(get_current_user), d
     db.add(b)
     await db.commit()
     await db.refresh(b)
-    # 后台初始化生成：大纲 / 情节 / 角色（不阻塞响应）
-    from ..services.book_bootstrap import launch
-    launch(b.id, u.id, {
-        "generate_outline": data.generate_outline,
-        "generate_plots": data.generate_plots,
-        "generate_characters": data.generate_characters,
-    })
     return _book_to_out(b)
 
 
@@ -113,6 +108,9 @@ async def delete_book(bid: int, u: User = Depends(get_current_user), db: AsyncSe
     b = await db.get(Book, bid)
     if not b or b.user_id != u.id:
         raise HTTPException(404, "书籍不存在")
+    from ..models.product import WorkJob
+    if await db.scalar(select(WorkJob.id).where(WorkJob.book_id==bid,WorkJob.status.in_(['queued','running']))):
+        raise HTTPException(409,'作品有未完成任务，请等待或取消后再删除')
     await db.delete(b)
     await db.commit()
     return {"ok": True}
@@ -138,3 +136,24 @@ async def create_volume(bid: int, data: VolumeIn, u: User = Depends(get_current_
     await db.commit()
     await db.refresh(v)
     return v
+
+
+@router.get("/{bid}/export")
+async def export_book(bid: int, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """导出当前用户拥有的整本正文，不输出模型密钥、对话或运营数据。"""
+    import re
+    from html import unescape
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    book = await db.get(Book, bid)
+    if not book or book.user_id != u.id:
+        raise HTTPException(404, "书籍不存在")
+    chapters = list(await db.scalars(select(Chapter).where(Chapter.book_id == bid).order_by(Chapter.number)))
+    if not any(c.content for c in chapters):
+        raise HTTPException(400, "尚无可导出的章节正文")
+    parts = [f"# {book.title}\n"]
+    for ch in chapters:
+        text = unescape(re.sub(r"<[^>]+>", "", re.sub(r"</p\s*>", "\n\n", ch.content or "", flags=re.I)))
+        parts.append(f"## 第{ch.number}章 {ch.title}\n\n{text}\n")
+    return Response("\n".join(parts), media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(book.title + ".md")})

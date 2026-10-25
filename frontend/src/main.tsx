@@ -7,6 +7,7 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import { ThemeProvider } from '@/components/theme-provider'
 import App from './App'
 import './index.css'
+import './styles/studio.css'
 
 const queryClient = new QueryClient()
 ReactDOM.createRoot(document.getElementById('root')!).render(

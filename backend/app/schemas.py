@@ -7,17 +7,18 @@ class UserOut(BaseModel):
     username: str
     version: str
     credits_balance: int
+    is_admin: bool = False
 
 
 class RegisterIn(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=6)
-    version: str = "local"
+    password: str = Field(min_length=6, max_length=72)
+    version: str = "business"
 
 
 class LoginIn(BaseModel):
     username: str
-    password: str
+    password: str = Field(max_length=72)
 
 
 class TokenOut(BaseModel):
@@ -72,6 +73,8 @@ class LLMConfigOut(BaseModel):
 
 
 class ChatIn(BaseModel):
+    book_id: int | None = Field(default=None,gt=0)
+    chapter_id: int | None = Field(default=None,gt=0)
     message: str
     thread_id: str | None = None
     llm_choice: dict | None = None
@@ -178,6 +181,7 @@ class ChapterCreateIn(BaseModel):
 
 
 class ChapterUpdateIn(BaseModel):
+    expected_hash: str | None = Field(default=None, min_length=64, max_length=64)
     title: str | None = None
     content: str | None = None
     volume_id: int | None = None
@@ -198,6 +202,7 @@ class ChapterOut(BaseModel):
 
 class ChapterDetailOut(ChapterOut):
     content: str
+    content_hash: str = ""
 
 
 class StatsOut(BaseModel):
@@ -263,7 +268,7 @@ class PolishOut(BaseModel):
 
 class ContinueIn(BaseModel):
     prefix_text: str | None = None  # 若为空，使用章节末尾
-    max_words: int = 600
+    max_words: int = Field(default=600, ge=50, le=1500)
     llm_choice: dict | None = None
     thread_id: str | None = None
 
@@ -280,6 +285,8 @@ class ContinueOut(BaseModel):
 
 
 class MultiWriteIn(BaseModel):
+    instruction: str = Field(default="", max_length=12000)
+    sync_settings: bool = True
     start_number: int
     end_number: int | None = None
     count: int | None = None
@@ -533,9 +540,9 @@ class AssistOut(BaseModel):
 
 # ===== P1-9 社区 =====
 class PostCreateIn(BaseModel):
-    title: str
-    content_html: str = ""
-    content_text: str = ""
+    title: str = Field(min_length=1,max_length=200)
+    content_html: str = Field(default="",max_length=100000)
+    content_text: str = Field(default="",max_length=50000)
 
 class PostUpdateIn(BaseModel):
     title: str | None = None

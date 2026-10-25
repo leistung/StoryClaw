@@ -25,6 +25,14 @@ from ..models import Book, Chapter, ConfigEntity, Outline
 async def execute_writer_tool(
     name: str, args: dict, user_id: int, book_id: int, chapter_id: int | None,
 ) -> str:
+    async with AsyncSessionLocal() as db:
+        book=await db.get(Book,book_id)
+        current=await db.get(Chapter,chapter_id) if chapter_id else None
+        if not book or book.user_id!=user_id or (chapter_id and (not current or current.book_id!=book_id)):
+            return '无权读取此作品或章节'
+        if current and name in ('get_prev_chapter','get_outline'):
+            requested=int(args.get('chapter_number') or current.number)
+            if requested>current.number:return '写作工具不能读取目标章之后的章节'
     handlers = {
         "query_setting": _tool_query_setting,
         "query_memory": _tool_query_memory,
@@ -50,7 +58,7 @@ def _clean(text: str, limit: int) -> str:
 async def _tool_query_setting(args, user_id: int, book_id: int, chapter_id) -> str:
     etype = (args.get("entity_type") or "").strip()
     keyword = (args.get("keyword") or "").strip()
-    valid = {"character", "scene", "item", "plot"}
+    valid = {"character", "scene", "item", "plot", "world"}
     if etype not in valid:
         return f"entity_type 只能是 {sorted(valid)} 之一"
     async with AsyncSessionLocal() as db:
@@ -78,28 +86,13 @@ async def _tool_query_memory(args, user_id: int, book_id: int, chapter_id) -> st
     query = (args.get("query") or "").strip()
     if not query:
         return "query 不能为空"
-    from storyclaw.rag.service import query_context
-    rag = await query_context(user_id, book_id, query, top_k=5)
-    if rag.get("error"):
-        return f"检索失败: {rag['error']}"
-    parts = []
-    chunks = rag.get("chunks") or []
-    if chunks:
-        parts.append("【相关章节片段】")
-        for c in chunks[:4]:
-            t = _clean(c.get("text") or "", 260)
-            if t:
-                parts.append(f"- 第{c.get('chapter_id','?')}章: {t}")
-    ents = rag.get("entities") or []
-    if ents:
-        parts.append("【相关实体】" + "、".join(f"{e.get('name','')}({e.get('type','')})" for e in ents[:12]))
-    rels = rag.get("relations") or []
-    if rels:
-        parts.append("【实体关系】")
-        parts.extend(f"- {r.get('from','')} {r.get('type','')} {r.get('to','')}" for r in rels[:10])
-    if not parts:
-        return "记忆中未检索到相关内容"
-    return "本书记忆检索结果（query: " + query + "）：\n" + "\n".join(parts)
+    from storyclaw.writing_context import query_memory_tool
+    async with AsyncSessionLocal() as db:
+        current=await db.get(Chapter,chapter_id) if chapter_id else None
+        q=select(Chapter).where(Chapter.book_id==book_id,Chapter.rag_status=='loaded')
+        if current:q=q.where(Chapter.number<current.number)
+        rows=list(await db.scalars(q))
+    return await query_memory_tool(user_id,book_id,query,[r.id for r in rows],{r.id:r.number for r in rows})
 
 
 async def _tool_get_outline(args, user_id: int, book_id: int, chapter_id) -> str:
@@ -112,6 +105,13 @@ async def _tool_get_outline(args, user_id: int, book_id: int, chapter_id) -> str
                 content = json.loads(row.content)
             except Exception:
                 content = {}
+        if content.get('planning_mode')=='serial':
+            chapter=await db.scalar(select(Chapter).where(Chapter.book_id==book_id,Chapter.number==num))
+            if chapter:
+                from .serial import blueprint_state
+                state=await blueprint_state(db,chapter)
+                if state['confirmed']:return json.dumps({'number':num,**state['plan']},ensure_ascii=False)
+            return '本章章纲未确认或已过期，请先核对；不得自行从远期规划冒充本章章纲'
     node = find_outline_node(content, num)
     if not node:
         return f"大纲中未找到第{num}章节点"

@@ -1,3 +1,4 @@
+import PostEngagement from '@/components/PostEngagement'
 import { useState, MouseEvent, FormEvent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -197,6 +198,7 @@ export default function PostDetail() {
         dangerouslySetInnerHTML={{ __html: post.content_html }}
       />
 
+      <PostEngagement postId={pid}/>
       {/* 关联书籍卡片 */}
       {post.book_links.length > 0 && (
         <div className="mt-8 pt-6 border-t">

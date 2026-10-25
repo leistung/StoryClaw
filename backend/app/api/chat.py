@@ -16,6 +16,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from ..services.revisions import snapshot, assert_editable, chapter_hash, guard_write
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,7 @@ from ..models import Book, Chapter, CreditsLedger, Message, User
 from ..schemas import (
     ChatIn, ChatOut, ChapterGenerateIn, ChapterGenerateOut, FeedbackIn,
 )
+from ..services.credits import debit
 from ..services import pricing as pricing_svc
 from ..services.memory import load_user_memory
 from ..services.skill_loader import build_write_context
@@ -39,9 +41,7 @@ router = APIRouter(prefix="", tags=["chat"])
 
 def _model_choice(u: User, choice: dict | None) -> dict:
     """从前端 llm_choice 解析出 graph 用的 model_choice dict。"""
-    if u.version == "local":
-        return {"kind": "local", "config_id": (choice or {}).get("config_id"), "user_id": u.id}
-    return {"kind": "business", "model_id": (choice or {}).get("model_id") or "gpt-4o-mini"}
+    return {"kind": "business", "model_id": (choice or {}).get("model_id")}
 
 
 async def _build_input(
@@ -61,7 +61,7 @@ async def _build_input(
 
     # 解析续写下一章：消息含"续写下一章/写下一章"时自动定位下一章
     resolved_chapter_id = chapter_id
-    if book_id and ("续写下一章" in message or "写下一章" in message or "下一章" in message):
+    if book_id and ("续写下一章" in message or "写下一章" in message):
         next_ch = await _find_next_chapter(book_id, chapter_id, db)
         if next_ch:
             resolved_chapter_id = next_ch
@@ -99,8 +99,11 @@ async def chat(data: ChatIn, u: User = Depends(get_current_user), db: AsyncSessi
     await db.commit()
     await db.refresh(um)
 
-    book_id = _extract_book_id(data.message)
-    chapter_id = _extract_chapter_id(data.message)
+    book_id = data.book_id or _extract_book_id(data.message)
+    chapter_id = data.chapter_id or _extract_chapter_id(data.message)
+    from storyclaw.contracts import Scope
+    from ..services.agent_runs import validate_scope
+    await validate_scope(db,u.id,Scope(book_id=book_id,chapter_id=chapter_id))
 
     model_choice = _model_choice(u, data.llm_choice)
     input_state = await _build_input(u, data.message, thread_id, model_choice, book_id, chapter_id, db)
@@ -122,7 +125,7 @@ async def chat(data: ChatIn, u: User = Depends(get_current_user), db: AsyncSessi
     cost = 0
     if u2.version == "business":
         cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-        u2.credits_balance -= cost
+        await debit(db, u2, cost)
         db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                              in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
     am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=content,
@@ -144,8 +147,11 @@ async def chat_stream(data: ChatIn, u: User = Depends(get_current_user), db: Asy
     await db.commit()
     await db.refresh(um)
 
-    book_id = _extract_book_id(data.message)
-    chapter_id = _extract_chapter_id(data.message)
+    book_id = data.book_id or _extract_book_id(data.message)
+    chapter_id = data.chapter_id or _extract_chapter_id(data.message)
+    from storyclaw.contracts import Scope
+    from ..services.agent_runs import validate_scope
+    await validate_scope(db,u.id,Scope(book_id=book_id,chapter_id=chapter_id))
 
     model_choice = _model_choice(u, data.llm_choice)
     input_state = await _build_input(u, data.message, thread_id, model_choice, book_id, chapter_id, db)
@@ -181,7 +187,7 @@ async def chat_stream(data: ChatIn, u: User = Depends(get_current_user), db: Asy
             cost = 0
             if u2.version == "business":
                 cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-                u2.credits_balance -= cost
+                await debit(db, u2, cost)
                 db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                                      in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
             am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=content,
@@ -226,6 +232,13 @@ async def generate_chapter(cid: int, data: ChapterGenerateIn,
     if not b or b.user_id != u.id:
         raise HTTPException(404, "章节不存在")
 
+    from ..services.planning import require_outline, require_previous_memory
+    await require_outline(db,b.id)
+    from ..services.serial import require_blueprint
+    await require_blueprint(db,c)
+    await require_previous_memory(db,c)
+    await assert_editable(db, cid)
+    base_hash=chapter_hash(c)
     prompt = data.prompt or f"请写本章：{c.title}"
     thread_id = data.thread_id or uuid.uuid4().hex
     um = Message(user_id=u.id, thread_id=thread_id, role="user", content=prompt)
@@ -237,6 +250,7 @@ async def generate_chapter(cid: int, data: ChapterGenerateIn,
     # 强制带"写本章"关键词触发 writer 路由
     routing_msg = f"写本章 {prompt}" if "写本章" not in prompt else prompt
     input_state = await _build_input(u, routing_msg, thread_id, model_choice, b.id, c.id, db)
+    input_state["intent"] = "write"
 
     try:
         final = await run_agent(input_state, thread_id)
@@ -254,14 +268,17 @@ async def generate_chapter(cid: int, data: ChapterGenerateIn,
     # 写回章节
     from storyclaw.context import count_words
     wc = count_words(content)
+    await guard_write(db,c,base_hash,(input_state.get("context") or {}).get("dependency_hash"))
+    await snapshot(db, c, "ai")
     c.content = content
     c.word_count = wc
+    c.rag_status = "pending"
 
     u2 = await db.get(User, u.id)
     cost = 0
     if u2.version == "business":
         cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-        u2.credits_balance -= cost
+        await debit(db, u2, cost)
         db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                              in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
     am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=content,
@@ -300,6 +317,13 @@ async def generate_chapter_stream(cid: int, data: ChapterGenerateIn,
     if not b or b.user_id != u.id:
         raise HTTPException(404, "章节不存在")
 
+    from ..services.planning import require_outline, require_previous_memory
+    await require_outline(db,b.id)
+    from ..services.serial import require_blueprint
+    await require_blueprint(db,c)
+    await require_previous_memory(db,c)
+    await assert_editable(db, cid)
+    base_hash=chapter_hash(c)
     prompt = data.prompt or f"请写本章：{c.title}"
     thread_id = data.thread_id or uuid.uuid4().hex
     um = Message(user_id=u.id, thread_id=thread_id, role="user", content=prompt)
@@ -310,6 +334,7 @@ async def generate_chapter_stream(cid: int, data: ChapterGenerateIn,
     model_choice = _model_choice(u, data.llm_choice)
     routing_msg = f"写本章 {prompt}" if "写本章" not in prompt else prompt
     input_state = await _build_input(u, routing_msg, thread_id, model_choice, b.id, c.id, db)
+    input_state["intent"] = "write"
 
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -365,13 +390,20 @@ async def generate_chapter_stream(cid: int, data: ChapterGenerateIn,
                     yield sse("error", {"message": "章节不存在"})
                     return
                 wc = count_words(content)
+                try:
+                    await guard_write(sdb,c2,base_hash,(input_state.get("context") or {}).get("dependency_hash"))
+                except HTTPException as exc:
+                    yield sse('error',{'message':str(exc.detail)})
+                    return
+                await snapshot(sdb, c2, "ai")
                 c2.content = content
                 c2.word_count = wc
+                c2.rag_status = "pending"
                 u2 = await sdb.get(User, u.id)
                 cost = 0
                 if u2 and u2.version == "business":
                     cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-                    u2.credits_balance -= cost
+                    await debit(sdb, u2, cost)
                     sdb.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                                          in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
                 am = Message(user_id=u.id, thread_id=thread_id, role="assistant", content=content,
@@ -420,6 +452,13 @@ async def modify_chapter(cid: int, data: ChapterGenerateIn,
     if not c.content:
         raise HTTPException(400, "章节尚未生成，无法修改。请先调用 /generate")
 
+    from ..services.planning import require_outline, require_previous_memory
+    await require_outline(db,b.id)
+    from ..services.serial import require_blueprint
+    await require_blueprint(db,c)
+    await require_previous_memory(db,c)
+    await assert_editable(db, cid)
+    base_hash=chapter_hash(c)
     modify_req = data.prompt or "请润色优化本章"
     thread_id = data.thread_id or uuid.uuid4().hex
     um = Message(user_id=u.id, thread_id=thread_id, role="user", content=modify_req)
@@ -446,14 +485,17 @@ async def modify_chapter(cid: int, data: ChapterGenerateIn,
 
     from storyclaw.context import count_words
     wc = count_words(content)
+    await guard_write(db,c,base_hash,(input_state.get("context") or {}).get("dependency_hash"))
+    await snapshot(db, c, "ai")
     c.content = content
     c.word_count = wc
+    c.rag_status = "pending"
 
     u2 = await db.get(User, u.id)
     cost = 0
     if u2.version == "business":
         cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-        u2.credits_balance -= cost
+        await debit(db, u2, cost)
         db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                              in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
     am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=content,
@@ -532,11 +574,7 @@ async def retry(mid: int, u: User = Depends(get_current_user), db: AsyncSession 
     if not um:
         raise HTTPException(400, "找不到原始提问")
 
-    # 用原 model_id 反推 model_choice
-    if u.version == "business":
-        model_choice = {"kind": "business", "model_id": am.model}
-    else:
-        model_choice = {"kind": "local", "config_id": None}
+    model_choice = {"kind": "business", "model_id": am.model}
 
     # 重试需要新的 thread_id 以避免 CheckPointer 命中历史
     new_tid = uuid.uuid4().hex
@@ -556,7 +594,7 @@ async def retry(mid: int, u: User = Depends(get_current_user), db: AsyncSession 
     cost = 0
     if u2.version == "business":
         cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-        u2.credits_balance -= cost
+        await debit(db, u2, cost)
         db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                              in_tokens=in_t, out_tokens=out_t, ref_msg_id=um.id))
     am2 = Message(user_id=u2.id, thread_id=new_tid, role="assistant", content=content,

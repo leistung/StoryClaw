@@ -10,7 +10,7 @@ from .skills import list_skill_index
 # ============ 大纲规划 ============
 SYSTEM_OUTLINE = """你是网文大纲规划师。根据书籍元数据生成完整的小说大纲。
 输出严格 JSON，格式：
-{"volumes":[{"name":"卷名","chapters":[{"number":1,"title":"章节标题","summary":"50字内梗概"}]}]}
+{"overview":"全书核心冲突、主角目标、主要转折与收束方向（300字内）","volumes":[{"name":"卷名","goal":"本卷阶段目标与转折","chapters":[{"number":1,"title":"章节标题","summary":"50字内梗概"}]}]}
 规则：
 - 章节总数必须等于 target_chapters
 - 合理分卷（每 5-10 章一卷）
@@ -27,7 +27,8 @@ def build_outline_user_prompt(meta: dict) -> str:
         f"预计章数：{meta.get('target_chapters', 20)}\n"
         f"预计总字数：{meta.get('target_words', 60000)}\n"
         f"每章字数：{meta.get('per_chapter_words', 3000)}\n"
-        "请生成完整大纲。"
+        f"固定设定（不可随意改名或更改关系）：{json.dumps(meta.get("canon", []), ensure_ascii=False)}\n"
+        "遵守简介中的时间跨度，在重要时间跳转处标明年龄或经过的年数。请生成完整大纲。"
     )
 
 
@@ -205,11 +206,11 @@ ANALYST_SUMMARY_SYSTEM = """你是网文前情提要生成器。为指定章节�
 
 # ============ 辅助节点 ============
 ASSIST_BRAINSTORM_SYSTEM = """你是小说创意顾问。根据主题生成 {count} 条创意建议。
-每条格式：### {序号}. {标题}\n- **描述**：{一句话}\n- **维度**：{情节/角色/设定/伏笔}\n- **可行性**：{高/中/低}
+每条格式：### 〈序号〉. 〈标题〉\n- **描述**：〈一句话〉\n- **维度**：〈情节/角色/设定/伏笔〉\n- **可行性**：〈高/中/低〉
 覆盖多个维度，不重复角度。"""
 
 ASSIST_TITLE_SYSTEM = """你是标题生成专家。生成 {count} 个{style}风格{target}标题。
-每条格式：{序号}. {标题} —— {适配理由}
+每条格式：〈序号〉. 〈标题〉 —— 〈适配理由〉
 字数：章节4-8字，卷名2-6字，书名2-10字。覆盖多种变体。"""
 
 ASSIST_SCENE_SYSTEM = """你是场景描写专家。增强以下场景的{mood}氛围，强化{senses}感官。

@@ -15,8 +15,8 @@ def _divisor() -> int:
 def compute_cost(model_id: str, in_tokens: int, out_tokens: int) -> int:
     """返回积分消耗(整数)。无 token 返回 0。"""
     m = get_model_pricing(model_id)
-    if not m:
-        return 0
+    if not m or not m.get("enabled", True):
+        raise ValueError(f"模型 {model_id} 未配置有效积分价格")
     if not (in_tokens or out_tokens):
         return 0
     div = _divisor()

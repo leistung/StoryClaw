@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.deps import get_current_user
+from ..core.admin import get_admin_user as get_current_user
 from ..core.security import encrypt_api_key
 from ..database import get_db
 from ..models import User, UserLLMConfig
@@ -30,7 +30,7 @@ async def list_cfg(u: User = Depends(get_current_user), db: AsyncSession = Depen
 
 @router.post("", response_model=LLMConfigOut)
 async def create_cfg(data: LLMConfigIn, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if u.version != "local":
+    if not u.is_admin:
         raise HTTPException(403, "仅本地版本可配置 LLM")
     if data.is_default:
         await db.execute(update(UserLLMConfig).where(UserLLMConfig.user_id == u.id).values(is_default=False))

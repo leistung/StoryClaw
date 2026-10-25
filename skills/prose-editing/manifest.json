@@ -1,0 +1,7 @@
+{
+  "id": "prose-editing",
+  "version": 1,
+  "description": "局部编辑",
+  "kind": "method",
+  "trust": "platform"
+}

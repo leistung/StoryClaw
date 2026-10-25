@@ -1,10 +1,9 @@
 # StoryClaw 核心编排
-# 核心服务: postgres redis etcd minio milvus neo4j backend frontend
+# 核心服务: postgres etcd minio milvus neo4j backend frontend admin-frontend
 # Agent 运行时统一由 backend 进程加载 packages/storyclaw（不再单独部署 langgraph-server）
-# 可选服务(profile: infra): nginx
 # 用法:
 #   docker compose --env-file .env -f docker/docker-compose.yml up -d            # 核心
-#   docker compose --env-file .env --profile infra -f docker/docker-compose.yml up -d  # 含 nginx
+name: storyclaw
 
 services:
   postgres:
@@ -23,19 +22,6 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-storyclaw}"]
       interval: 5s
       timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    container_name: storyclaw-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
       retries: 10
 
   etcd:
@@ -122,7 +108,6 @@ services:
     env_file: ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
       MILVUS_HOST: ${MILVUS_HOST}
       MILVUS_PORT: ${MILVUS_PORT}
       NEO4J_URI: ${NEO4J_URI}
@@ -132,19 +117,19 @@ services:
       # 开发/测试：EMBEDDING_MODE=hash 使用内置伪向量，无需外部 embedding 服务
       EMBEDDING_MODE: ${EMBEDDING_MODE:-}
       PYTHONPATH: /app/storyclaw_src:/app/backend
+      WATCHFILES_FORCE_POLLING: "true"
+      WATCHFILES_POLL_DELAY_MS: "500"
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8010}:8000"
     volumes:
       - ../backend:/app/backend
       - ../configs:/app/configs:ro
       - ../skills:/app/skills:ro
       - ../packages/storyclaw/src:/app/storyclaw_src:ro
     working_dir: /app/backend
-    command: ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/backend", "--reload-dir", "/app/storyclaw_src", "--reload-dir", "/app/skills", "--reload-include", "*.py", "--reload-include", "*.md"]
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       milvus:
         condition: service_started
@@ -164,8 +149,10 @@ services:
     environment:
       # 容器内用服务名访问 backend（vite proxy target）
       VITE_PROXY_TARGET: ${VITE_PROXY_TARGET:-http://backend:8000}
+      VITE_USE_POLLING: "true"
+      VITE_ADMIN_URL: ${ADMIN_PUBLIC_URL:-http://localhost:5174}
     ports:
-      - "5173:5173"
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
     volumes:
       - ../frontend:/app/frontend
       - /app/frontend/node_modules
@@ -175,21 +162,29 @@ services:
       backend:
         condition: service_healthy
 
-  nginx:
-    image: nginx:alpine
-    container_name: storyclaw-nginx
-    profiles: ["infra"]
+
+  admin-frontend:
+    build:
+      context: ..
+      dockerfile: docker/admin-frontend.Dockerfile
+    container_name: storyclaw-admin-frontend
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+      VITE_USE_POLLING: "true"
+      VITE_WRITER_URL: ${WRITER_PUBLIC_URL:-http://localhost:5173}
     ports:
-      - "80:80"
+      - "${ADMIN_HOST_PORT:-5174}:5174"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../admin-frontend:/app/admin-frontend
+      - /app/admin-frontend/node_modules
+    working_dir: /app/admin-frontend
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
-  redis_data:
   etcd_data:
   minio_data:
   milvus_data:

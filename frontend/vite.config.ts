@@ -12,30 +12,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    strictPort: true,
+    watch: { usePolling: process.env.VITE_USE_POLLING === 'true', interval: 500 },
     proxy: { '/api': { target: proxyTarget, changeOrigin: true } },
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        // 手动拆 vendor：首屏只加载 react 核心，编辑器/图表等按需
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('@tiptap') || id.includes('tiptap')) return 'editor'
-            if (id.includes('@tanstack/react-query')) return 'query'
-            if (id.includes('axios')) return 'http'
-            if (
-              id.includes('react-dom') ||
-              id.includes('react-router') ||
-              id.includes('react/') ||
-              id.includes('scheduler')
-            ) {
-              return 'react-vendor'
-            }
-            if (id.includes('zustand')) return 'state'
-            return 'vendor'
-          }
-        },
-      },
-    },
   },
 })

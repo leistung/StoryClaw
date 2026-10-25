@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import admin, auth, books, chapters, chat, community, config_entities, configs as api_configs, llm_configs, messages, outlines, rag, reading_configs, recharge, share, skills, writing
+from .api import admin, auth, books, chapters, chat, community, config_entities, configs as api_configs, messages, outlines, rag, reading_configs, recharge, share, skills, writing
 from .config import settings
 from .core.errors import APIError, error_body
 from .core.logging import add_request_logging, setup_logging
@@ -19,6 +19,13 @@ async def lifespan(app: FastAPI):
     # 开发期：自动建表（生产用 `make migrate` 走 alembic）
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with AsyncSessionLocal() as db:
+        from .services.platform import refresh_configs
+        from sqlalchemy import update
+        from .models import User
+        await db.execute(update(User).where(User.version != "business").values(version="business"))
+        await db.commit()
+        await refresh_configs(db)
     # 注入 agent 数据层依赖到 packages/storyclaw（llm/memory/context/rag/checkpointer）
     try:
         from storyclaw.deps import configure as sc_configure
@@ -66,7 +73,15 @@ async def lifespan(app: FastAPI):
         # 容错：storyclaw 包未安装时仍可启动基础 API
         import logging
         logging.getLogger("storyclaw").warning(f"storyclaw configure skipped: {e}")
-    yield
+    import asyncio
+    from .services.jobs import queue_loop
+    consumer=asyncio.create_task(queue_loop())
+    try:
+        yield
+    finally:
+        consumer.cancel()
+        try:await consumer
+        except asyncio.CancelledError:pass
 
 
 setup_logging(getattr(settings, "log_level", "INFO"))
@@ -139,7 +154,6 @@ add_request_logging(app)
 
 API_PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=API_PREFIX)
-app.include_router(llm_configs.router, prefix=API_PREFIX)
 app.include_router(api_configs.router, prefix=API_PREFIX)
 app.include_router(books.router, prefix=API_PREFIX)
 app.include_router(chapters.router, prefix=API_PREFIX)
@@ -155,8 +169,21 @@ app.include_router(community.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(recharge.router, prefix=API_PREFIX)
 app.include_router(messages.router, prefix=API_PREFIX)
+from .api import jobs, publications, product_ops
+app.include_router(jobs.router, prefix=API_PREFIX)
+app.include_router(publications.router, prefix=API_PREFIX)
+app.include_router(product_ops.router, prefix=API_PREFIX)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+from .api import ideation
+app.include_router(ideation.router, prefix=API_PREFIX)
+
+from .api import serial
+app.include_router(serial.router,prefix=API_PREFIX)
+
+from .api import agent
+app.include_router(agent.router,prefix=API_PREFIX)

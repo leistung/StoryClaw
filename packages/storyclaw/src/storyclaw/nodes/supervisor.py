@@ -24,6 +24,12 @@ def supervisor(state: AgentState) -> dict:
     last = msgs[-1]["content"] if msgs else ""
     has_chapter = bool(state.get("chapter_id") or state.get("current_content"))
 
+    # 明确业务端点的操作优先于用户文本中的关键词，避免“不要修改”被路由为修改。
+    preset = state.get("intent")
+    if preset in {"write", "modify", "continue", "polish", "assist"}:
+        skills = {"write": "write-chapter", "modify": "modify-chapter", "continue": "continue-writing", "polish": "polish-chapter"}
+        return {"intent": preset, "active_skill": skills.get(preset, state.get("active_skill")), "status": "running"}
+
     # 0. 尊重 API 端点预设的 analyze intent（analyze 端点直接设了 intent+active_skill，
     #    其 message 形如 "[skill] 书籍 X" 不含触发关键词，需短路避免误路由到 chat）
     _preset_skill = state.get("active_skill")

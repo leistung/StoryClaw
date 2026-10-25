@@ -1,184 +1,24 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
-import {
-  listMemberships,
-  purchaseMembership,
-  getRechargeHistory,
-  extractError,
-} from '@/lib/api'
-import type { Membership, RechargeHistory, PurchaseResult } from '@/types'
-import {
-  CreditCard,
-  Check,
-  Star,
-  Crown,
-  Gift,
-  Clock,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
-import {
-  Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
-} from '@/components/ui/table'
-import { Skeleton } from '@/components/ui/skeleton'
-
-function formatDate(s: string | null): string {
-  if (!s) return ''
-  try {
-    const d = new Date(s)
-    if (Number.isNaN(d.getTime())) return s
-    return d.toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return s
-  }
-}
-
-function priceYuan(cents: number): string {
-  return (cents / 100).toFixed(2)
-}
-
-const PERIOD_ICON: Record<string, React.ReactNode> = {
-  month: <Star size={18} />,
-  quarter: <Gift size={18} />,
-  year: <Crown size={18} />,
-}
-
-const PERIOD_LABEL: Record<string, string> = {
-  month: '月卡',
-  quarter: '季卡',
-  year: '年卡',
-}
-
-export default function Recharge() {
-  const qc = useQueryClient()
-
-  const { data: cfg, isFetching } = useQuery({
-    queryKey: ['recharge-memberships'],
-    queryFn: listMemberships,
-  })
-
-  const { data: history, isFetching: histLoading } = useQuery<RechargeHistory[]>({
-    queryKey: ['recharge-history'],
-    queryFn: getRechargeHistory,
-  })
-
-  const purchaseMut = useMutation({
-    mutationFn: (id: string) => purchaseMembership(id),
-    onSuccess: (res: PurchaseResult) => {
-      toast.success(`购买成功：${res.membership}，新增积分 ${res.credits_added}，新余额 ${res.new_balance}（${res.payment_status}）`)
-      qc.invalidateQueries({ queryKey: ['recharge-history'] })
-    },
-    onError: (err) => {
-      toast.error(extractError(err, '购买失败'))
-    },
-  })
-
-  const memberships: Membership[] = cfg?.memberships?.filter((m) => m.enabled) ?? []
-
-  return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <CreditCard size={22} /> 充值会员
-        </h1>
-        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-          模拟支付
-        </Badge>
-      </div>
-
-      {/* 套餐卡片 */}
-      {isFetching && !cfg ? (
-        <div className="space-y-2">
-          <Skeleton className="h-40 w-full" />
-        </div>
-      ) : memberships.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {memberships.map((m) => {
-            const icon = PERIOD_ICON[m.period] ?? <CreditCard size={18} />
-            const label = PERIOD_LABEL[m.period] ?? m.name
-            const buying = purchaseMut.isPending && purchaseMut.variables === m.id
-            return (
-              <Card key={m.id} className="p-5 flex flex-col hover:shadow-md transition border-none shadow-sm">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-                    {icon}
-                  </span>
-                  <div>
-                    <div className="font-bold">{m.name}</div>
-                    <div className="text-xs text-muted-foreground">{label}</div>
-                  </div>
-                </div>
-                <div className="mb-3">
-                  <span className="text-3xl font-bold text-foreground">¥{priceYuan(m.price_cny)}</span>
-                  <span className="text-sm text-muted-foreground ml-1">
-                    / {m.duration_days} 天
-                  </span>
-                </div>
-                <div className="text-sm text-muted-foreground mb-4 flex items-center gap-1">
-                  <Gift size={14} className="text-amber-500" />
-                  赠送 <span className="font-semibold text-amber-600">{m.bonus_credits}</span> 积分
-                </div>
-                <Button
-                  onClick={() => purchaseMut.mutate(m.id)}
-                  disabled={buying}
-                  className="mt-auto w-full"
-                >
-                  {buying ? '处理中…' : (
-                    <>
-                      <CreditCard size={14} /> 立即购买
-                    </>
-                  )}
-                </Button>
-              </Card>
-            )
-          })}
-        </div>
-      ) : (
-        <div className="text-center text-muted-foreground py-12 border rounded-xl bg-muted/30">
-          暂无可用套餐
-        </div>
-      )}
-
-      {/* 充值历史 */}
-      <div className="mt-8">
-        <h2 className="font-semibold flex items-center gap-2 mb-3">
-          <Clock size={16} /> 充值历史
-        </h2>
-        {histLoading && !history ? (
-          <div className="text-muted-foreground text-sm">加载中…</div>
-        ) : history && history.length > 0 ? (
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead className="text-right">积分变动</TableHead>
-                  <TableHead>说明</TableHead>
-                  <TableHead>时间</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {history.map((h) => (
-                  <TableRow key={h.id}>
-                    <TableCell className="text-muted-foreground">{h.id}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${h.delta >= 0 ? 'text-emerald-600' : 'text-destructive'}`}>
-                      {h.delta >= 0 ? '+' : ''}{h.delta}
-                    </TableCell>
-                    <TableCell>{h.reason}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(h.created_at)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
-        ) : (
-          <div className="text-center text-muted-foreground py-8 border rounded-xl bg-muted/30">
-            暂无充值记录
-          </div>
-        )}
-      </div>
-    </div>
-  )
+import {useState} from 'react'
+import {useQuery,useMutation,useQueryClient} from '@tanstack/react-query'
+import {CreditCard,Check,ArrowUpRight,Clock3,Coins} from 'lucide-react'
+import {toast} from 'sonner'
+import api,{extractError} from '@/lib/api'
+import {useAuthStore} from '@/stores/auth'
+import {Button} from '@/components/ui/button'
+interface Package{id:string;name:string;price_cny:number;bonus_credits:number;duration_days:number;enabled:boolean}
+interface Order{id:string;package:Package;status:string;note:string;created_at:string}
+const reasons:Record<string,string>={ideation:'选题讨论',consume:'AI 创作',bonus:'注册赠送','chapter-plan':'场景规划',recharge:'积分充值',refund:'积分退回'}
+const states:Record<string,string>={pending:'等待运营处理',approved:'已开通',rejected:'未通过'}
+export default function Recharge(){
+ const qc=useQueryClient();const fetchMe=useAuthStore(s=>s.fetchMe);const [page,setPage]=useState(1)
+ const wallet=useQuery({queryKey:['wallet'],queryFn:async()=>(await api.get<{credits_balance:number;membership:null|{name:string;expires_at:string;active:boolean}}>('/wallet')).data,refetchInterval:10000})
+ const packages=useQuery({queryKey:['membership-packages'],queryFn:async()=>(await api.get<{memberships:Package[]}>('/recharge/memberships')).data})
+ const ledger=useQuery({queryKey:['wallet-ledger',page],queryFn:async()=>(await api.get<{items:{id:number;delta:number;reason:string;model:string;created_at:string}[];total:number}>('/wallet/ledger',{params:{page}})).data,refetchInterval:10000})
+ const orders=useQuery({queryKey:['wallet-orders'],queryFn:async()=>(await api.get<Order[]>('/wallet/orders')).data,refetchInterval:10000})
+ const request=useMutation({mutationFn:async(id:string)=>api.post('/wallet/orders',{membership_id:id,request_id:crypto.randomUUID()}),onSuccess:()=>{qc.invalidateQueries({queryKey:['wallet-orders']});toast.success('开通申请已提交，请等待运营审核');void fetchMe()},onError:e=>toast.error(extractError(e,'申请失败'))})
+ return <div className="wallet-page"><div className="section-heading"><div><span className="section-overline">MORE ROOM FOR YOUR IMAGINATION</span><h1 className="text-2xl mt-2 font-medium">会员与积分</h1></div><span className="text-xs text-muted-foreground">每一笔消耗，都有记录。</span></div><div className="wallet-overview"><div><Coins size={22}/><p>可用积分</p><strong>{wallet.data?.credits_balance.toLocaleString() ?? '—'}</strong></div><div><CreditCard size={22}/><p>当前会员</p><h2>{wallet.data?.membership?.active?wallet.data.membership.name:'普通创作者'}</h2><small>{wallet.data?.membership?`${wallet.data.membership.active?'有效期至':'已于'} ${new Date(wallet.data.membership.expires_at).toLocaleDateString('zh-CN')}${wallet.data.membership.active?'':'到期'}`:'可使用现有积分进行 AI 创作'}</small></div></div>
+ <div className="product-notice"><Clock3 size={18}/><p>当前支持运营人工开通。提交申请不会扣款，也不代表已付款；运营核实后会开通会员并发放套餐积分。在线支付暂未接入。</p></div>
+ {packages.error||wallet.error?<p role="alert">{extractError(packages.error||wallet.error,'加载失败，请刷新重试')}</p>:<div className="membership-grid">{packages.data?.memberships.filter(p=>p.enabled).map(p=><article key={p.id}><span className="section-overline">STORYCLAW MEMBERSHIP</span><h2>{p.name}</h2><strong><small>¥</small>{p.price_cny}<small> / {p.duration_days}天</small></strong><p><Check size={14}/>{p.bonus_credits.toLocaleString()} 创作积分</p><p><Check size={14}/>平台模型与故事记忆</p><Button className="w-full mt-6" variant="outline" disabled={request.isPending||orders.data?.some(o=>o.status==='pending')} onClick={()=>{if(window.confirm(`提交「${p.name}」开通申请？此操作不会扣款，需要运营审核。`))request.mutate(p.id)}}>申请开通<ArrowUpRight size={14}/></Button></article>)}</div>}
+ <section className="mt-10"><h2 className="text-lg font-medium mb-4">开通申请</h2>{orders.error?<p>{extractError(orders.error,'申请加载失败')}</p>:!orders.data?.length?<p className="product-empty">暂无开通申请</p>:<div className="space-y-3">{orders.data.map(o=><div className="order-row" key={o.id}><div><strong>{o.package.name}</strong><small>{new Date(o.created_at).toLocaleString('zh-CN')}</small>{o.note&&<p>{o.note}</p>}</div><span className="text-xs text-primary">{states[o.status] || o.status}</span></div>)}</div>}</section>
+ <section className="mt-10"><div className="section-heading"><h2 className="text-lg font-medium">积分明细</h2><span className="text-xs text-muted-foreground">共 {ledger.data?.total ?? 0} 笔</span></div>{ledger.error?<p>{extractError(ledger.error,'明细加载失败')}</p>:<div className="wallet-ledger">{ledger.data?.items.map(r=><div key={r.id}><span><strong>{reasons[r.reason] ?? r.reason}</strong><small>{r.model || '平台'} · {new Date(r.created_at).toLocaleString('zh-CN')}</small></span><b className={r.delta>=0?'text-primary':''}>{r.delta>0?'+':''}{r.delta}</b></div>)}{!ledger.data?.items.length&&<p className="product-empty">暂无积分流水</p>}</div>}<div className="flex justify-end gap-3 mt-4"><Button size="sm" variant="outline" disabled={page===1} onClick={()=>setPage(p=>p-1)}>上一页</Button><span className="self-center text-xs">第 {page} 页</span><Button size="sm" variant="outline" disabled={page*30>=(ledger.data?.total ?? 0)} onClick={()=>setPage(p=>p+1)}>下一页</Button></div></section></div>
 }

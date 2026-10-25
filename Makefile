@@ -3,8 +3,8 @@
 
 help:
 >@echo "StoryClaw dev commands:"
->@echo "  make up          启动核心服务 (postgres redis milvus neo4j langgraph backend frontend)"
->@echo "  make up-all      启动全部服务 (含 nginx/minio/etcd)"
+>@echo "  make up          启动核心服务 (postgres milvus neo4j backend frontend admin-frontend)"
+>@echo "  make up-all      启动全部所需服务"
 >@echo "  make down        停止全部服务"
 >@echo "  make health      健康检查"
 >@echo "  make logs        查看日志 (Ctrl+C 退出)"
@@ -16,18 +16,19 @@ help:
 COMPOSE := docker compose --env-file .env -f docker/docker-compose.yml
 
 up:
->$(COMPOSE) up -d postgres redis milvus neo4j backend frontend
+>$(COMPOSE) up -d postgres milvus neo4j backend frontend admin-frontend
 
 up-all:
->$(COMPOSE) --profile infra up -d
+>$(COMPOSE) up -d
 
 down:
 >$(COMPOSE) down
 
 health:
 >@echo "Checking services..."
->@curl -sf http://localhost:8000/health && echo " <- backend OK" || echo "backend DOWN"
->@curl -sf http://localhost:5173 >/dev/null && echo "frontend OK" || echo "frontend DOWN"
+>$(COMPOSE) exec -T backend curl -sf http://localhost:8000/health
+>$(COMPOSE) exec -T frontend wget -q --spider http://localhost:5173
+>$(COMPOSE) exec -T admin-frontend wget -q --spider http://localhost:5174
 >$(COMPOSE) ps
 
 logs:

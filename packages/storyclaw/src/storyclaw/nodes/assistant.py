@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .. import prompts
 from .._util import strip_code_fence
 from ..llm import get_llm
+from ..skills import method_instructions
 from ..state import AgentState
 
 
@@ -59,6 +60,7 @@ async def _assist_brainstorm(state: AgentState, llm) -> tuple[str, int, int]:
     book_meta = ctx.get("book_meta") or {}
     if book_meta:
         sys_prompt += f"\n书籍：《{book_meta.get('title','')}》{book_meta.get('genre','')}主角：{book_meta.get('protagonist_name','')}"
+    sys_prompt += "\n\n" + method_instructions(state.get("active_skill") or "")
     resp = await llm.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_msg)])
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage = getattr(resp, "usage_metadata", None) or {}
@@ -73,6 +75,7 @@ async def _assist_title(state: AgentState, llm) -> tuple[str, int, int]:
     style = ctx.get("style", "classic")
     target = ctx.get("target", "chapter")
     sys_prompt = prompts.ASSIST_TITLE_SYSTEM.format(count=count, style=style, target=target)
+    sys_prompt += "\n\n" + method_instructions(state.get("active_skill") or "")
     resp = await llm.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_msg)])
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage = getattr(resp, "usage_metadata", None) or {}
@@ -91,6 +94,7 @@ async def _assist_scene(state: AgentState, llm) -> tuple[str, int, int]:
     sys_prompt = prompts.ASSIST_SCENE_SYSTEM.format(mood=mood, senses="、".join(senses), length_hint=length_hint)
     if scene_text:
         user_msg = f"原文：\n{scene_text}\n\n请增强以上场景。"
+    sys_prompt += "\n\n" + method_instructions(state.get("active_skill") or "")
     resp = await llm.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_msg)])
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage = getattr(resp, "usage_metadata", None) or {}
@@ -114,6 +118,7 @@ async def _assist_dialogue(state: AgentState, llm) -> tuple[str, int, int]:
     sys_prompt = prompts.ASSIST_DIALOGUE_SYSTEM.format(goal_desc=goal_desc, characters_info=chars_info or "无角色档案")
     if dialogue_text:
         user_msg = f"原对话：\n{dialogue_text}\n\n请润色以上对话。"
+    sys_prompt += "\n\n" + method_instructions(state.get("active_skill") or "")
     resp = await llm.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_msg)])
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage = getattr(resp, "usage_metadata", None) or {}
@@ -128,6 +133,7 @@ async def _assist_reading_config(state: AgentState, llm) -> tuple[str, int, int]
     user_msg = f"场景：{scene}"
     if user_prefs:
         user_msg += f"\n用户偏好：{json.dumps(user_prefs, ensure_ascii=False)}"
+    sys_prompt += "\n\n" + method_instructions(state.get("active_skill") or "")
     resp = await llm.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_msg)])
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     content = strip_code_fence(content)

@@ -1,0 +1,7 @@
+{
+  "id": "continuity-review",
+  "version": 1,
+  "description": "来源化一致性审阅",
+  "kind": "method",
+  "trust": "platform"
+}

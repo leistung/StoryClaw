@@ -1,4 +1,8 @@
 import { useState, useEffect } from 'react'
+import {enqueueJob} from '@/lib/jobs'
+import {toast} from 'sonner'
+import {Link} from 'react-router-dom'
+import {extractError} from '@/lib/api'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listConfigEntities, createConfigEntity, updateConfigEntity, deleteConfigEntity, loadRagRelated,
@@ -19,6 +23,7 @@ interface ConfigPageProps {
 }
 
 const TYPE_LABELS: Record<ConfigEntityType, { label: string; categories: string[] }> = {
+  world: {label:'世界观',categories:['时代地理','社会制度','能力与代价','叙事规则']},
   character: { label: '角色', categories: ['主角', '配角', '反派', '路人'] },
   scene: { label: '场景', categories: ['室内', '室外', '幻想', '回忆'] },
   item: { label: '物品', categories: ['武器', '道具', '信物', '消耗品'] },
@@ -46,6 +51,11 @@ export default function ConfigPage({ bid, entityType }: ConfigPageProps) {
     }
   }, [items, selectedId])
 
+  const designMut=useMutation({
+    mutationFn:()=>enqueueJob({book_id:bid,kind:'story-design',design_type:entityType as 'character'|'world'|'plot'}),
+    onSuccess:()=>{void qc.invalidateQueries({queryKey:['jobs',bid]});toast.success('设计草案已排队，完成后到任务中心审阅并采用')},
+    onError:e=>toast.error(extractError(e,'请先确认大纲，并等待本书当前任务完成')),
+  })
   const createMut = useMutation({
     mutationFn: () => createConfigEntity(bid, entityType, {
       name: `新${meta.label}${items.length + 1}`,
@@ -75,7 +85,9 @@ export default function ConfigPage({ bid, entityType }: ConfigPageProps) {
   })
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {['character','world','plot'].includes(entityType)&&<div className="border-b px-4 py-2 flex items-center gap-3 text-xs"><Button size="sm" variant="outline" disabled={designMut.isPending} onClick={()=>designMut.mutate()}>AI 设计{meta.label}草案</Button><span className="text-muted-foreground">先确认大纲，生成后到任务中心审阅；采用才新增卡片，同名档案不覆盖。</span><Link to={`/workspace/${bid}?tab=任务`}>查看任务 →</Link></div>}
+      <div className="flex flex-1 min-h-0">
       <div className="w-64 border-r flex flex-col bg-muted/40">
         <div className="p-2 border-b bg-background flex items-center justify-between">
           <span className="text-sm font-medium text-foreground">{meta.label}列表</span>
@@ -142,7 +154,7 @@ export default function ConfigPage({ bid, entityType }: ConfigPageProps) {
           </div>
         )}
       </div>
-    </div>
+    </div></div>
   )
 }
 

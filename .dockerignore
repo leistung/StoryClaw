@@ -1,0 +1,11 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/dist
+.env
+.env.*
+.idea
+.DS_Store
+docs/screenshots

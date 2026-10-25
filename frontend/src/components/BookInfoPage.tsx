@@ -1,3 +1,4 @@
+import PublicationPanel from './PublicationPanel'
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -78,6 +79,7 @@ export default function BookInfoPage({ book, bid, onSaved }: Props) {
           </Button>
         </div>
 
+        <PublicationPanel bookId={bid}/>
         {/* 只读概览 */}
         <Card className="border-none shadow-sm">
           <CardContent className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">

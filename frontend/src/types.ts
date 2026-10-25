@@ -189,6 +189,7 @@ export interface Chapter {
 }
 
 export interface ChapterDetail extends Chapter {
+  content_hash?: string
   content: string
 }
 
@@ -206,6 +207,7 @@ export interface OutlineChapter {
 }
 
 export interface OutlineVolume {
+  goal?:string
   name: string
   chapters: OutlineChapter[]
 }
@@ -425,7 +427,7 @@ export interface AnalyzeResponse {
 }
 
 // ===== P1-7 配置实体 =====
-export type ConfigEntityType = 'character' | 'scene' | 'item' | 'plot' | 'outline'
+export type ConfigEntityType = 'character' | 'scene' | 'item' | 'plot' | 'outline' | 'world'
 
 export interface EntityKv {
   id?: number

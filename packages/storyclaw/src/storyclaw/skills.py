@@ -10,10 +10,37 @@ Agent 通过 `describe_skill(name)` 获取元数据，再把 SKILL.md 全文注�
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+
+# Legacy names resolve methods, never executable workflows.
+SKILL_ALIASES = {
+    "write-chapter": "chapter-craft", "modify-chapter": "chapter-craft",
+    "continue-writing": "prose-editing", "polish-chapter": "prose-editing",
+    "outline-planning": "framework-design", "plot-planning": "plot-design",
+    "character-development": "character-arc", "consistency-check": "continuity-review",
+    "book-summary": "story-summarization", "brainstorm": "idea-generation",
+    "title-generation": "naming", "scene-enhance": "scene-and-dialogue",
+    "dialogue-polish": "scene-and-dialogue",
+}
+RETIRED_SKILLS = {"continue-chapter": "chapter.write", "write-multi-chapters": "serial.advance",
+                  "reading-config-gen": "reading presets", "skill-creator": "private method proposals (planned)"}
+
+def canonical_skill(name: str) -> str:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name):
+        return ""
+    return SKILL_ALIASES.get(name, name)
+
+
+def method_instructions(name: str) -> str:
+    sections = read_skill_sections(name, ("method", "constraints"))
+    return "\n\n".join(f"[{key}]\n{value}" for key,value in sections.items() if value)
+
 
 
 def describe_skill(skill_name: str) -> dict[str, Any]:
@@ -23,9 +50,14 @@ def describe_skill(skill_name: str) -> dict[str, Any]:
     """
     path = _find_skill_path(skill_name)
     if not path:
-        return {"name": skill_name, "description": "(SKILL.md not found)"}
+        return {"name": skill_name, "available": False, "replacement": RETIRED_SKILLS.get(skill_name), "description": "该名称不是活跃创作方法"}
     text = path.read_text(encoding="utf-8")
-    return _parse_skill_md(skill_name, text)
+    result = _parse_skill_md(path.parent.name, text)
+    manifest_path = path.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    result.update(available=True, requested_name=skill_name, version=manifest.get("version", 1),
+                  content_hash=hashlib.sha256(text.encode()).hexdigest(), kind="method")
+    return result
 
 
 def read_skill_doc(skill_name: str) -> str:
@@ -38,7 +70,8 @@ def read_skill_doc(skill_name: str) -> str:
 
 # section 别名映射（中英文），用于把 SKILL.md 指定章节注入 system prompt
 _SECTION_ALIASES: dict[str, tuple[str, ...]] = {
-    "workflow": ("workflow", "流程", "步骤", "运行流程"),
+    "workflow": ("method", "方法", "workflow", "流程", "步骤", "运行流程"),
+    "method": ("method", "方法"),
     "constraints": ("constraints", "约束", "注意事项", "规则"),
     "output": ("output", "输出", "输出格式"),
     "description": ("description", "描述", "简介"),
@@ -114,8 +147,13 @@ def list_skills(skills_dir: str | Path | None = None) -> list[dict[str, Any]]:
 
 def _find_skill_path(skill_name: str) -> Path | None:
     base = settings.skills_path
-    p = base / skill_name / "SKILL.md"
-    return p if p.exists() else None
+    name = canonical_skill(skill_name)
+    if not name or name in RETIRED_SKILLS:
+        return None
+    p = (base / name / "SKILL.md").resolve()
+    if not p.is_relative_to(base.resolve()):
+        return None
+    return p if p.is_file() else None
 
 
 def _parse_skill_md(name: str, text: str) -> dict[str, Any]:

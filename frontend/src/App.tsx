@@ -8,16 +8,20 @@ import type { ReactNode } from 'react'
 const Home = lazy(() => import('@/pages/Home'))
 const Login = lazy(() => import('@/pages/Login'))
 const Register = lazy(() => import('@/pages/Register'))
-const LLMConfigs = lazy(() => import('@/pages/LLMConfigs'))
 const Share = lazy(() => import('@/pages/Share'))
 const Workspace = lazy(() => import('@/pages/Workspace'))
 const Community = lazy(() => import('@/pages/Community'))
 const PostDetail = lazy(() => import('@/pages/PostDetail'))
 const ReadBook = lazy(() => import('@/pages/ReadBook'))
 const Help = lazy(() => import('@/pages/Help'))
-const Admin = lazy(() => import('@/pages/Admin'))
 const Recharge = lazy(() => import('@/pages/Recharge'))
+const Jobs = lazy(() => import('@/components/JobCenter'))
 const Messages = lazy(() => import('@/pages/Messages'))
+
+function AdminRedirect() {
+  useEffect(() => { window.location.replace(import.meta.env.VITE_ADMIN_URL || 'http://localhost:5174') }, [])
+  return <div className="p-8">正在打开独立运营中台…</div>
+}
 
 const PageFallback = () => (
   <div className="flex min-h-[60vh] items-center justify-center">
@@ -63,17 +67,18 @@ export default function App() {
       <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      <Route path="/share/:token" element={<Share />} />
+      <Route path="/share/:token" element={<Protected><Share /></Protected>} />
       {/* 主页框架：未登录/已登录共用顶部导航，内容按登录态渲染 */}
-      <Route element={<Layout />}>
+      <Route element={<Protected><Layout /></Protected>}>
         <Route path="/" element={<Home />} />
+        <Route path="/jobs" element={<Jobs />} />
         <Route path="/community" element={<Community />} />
         <Route path="/post/:id" element={<PostDetail />} />
         <Route path="/read/:bookId" element={<ReadBookRoute />} />
         <Route path="/help" element={<Help />} />
         {/* 需要登录的页面 */}
-        <Route path="/llm-configs" element={<Protected><LLMConfigs /></Protected>} />
-        <Route path="/admin" element={<Protected><Admin /></Protected>} />
+        <Route path="/llm-configs" element={<AdminRedirect />} />
+        <Route path="/admin" element={<AdminRedirect />} />
         <Route path="/recharge" element={<Protected><Recharge /></Protected>} />
         <Route path="/messages" element={<Protected><Messages /></Protected>} />
       </Route>

@@ -19,7 +19,8 @@ class PurchaseIn(BaseModel):
 @router.get("/memberships")
 async def list_memberships():
     cfg = load_membership()
-    return cfg
+    from ..config import settings
+    return {**cfg, "payments_enabled": False, "activation_mode": "manual_review"}
 
 
 @router.post("/purchase")
@@ -28,20 +29,7 @@ async def purchase(
     u: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    cfg = load_membership()
-    ms = [m for m in cfg.get("memberships", []) if m.get("id") == data.membership_id and m.get("enabled")]
-    if not ms:
-        raise HTTPException(400, f"未知或已下线的会员套餐: {data.membership_id}")
-    m = ms[0]
-    credits = int(m.get("bonus_credits", 0))
-    # 占位支付：直接加积分
-    u.credits_balance += credits
-    ledger = CreditsLedger(user_id=u.id, delta=credits, reason=f"充值-{m['name']}", model="recharge")
-    db.add(ledger)
-    await db.commit()
-    await db.refresh(u)
-    return {"ok": True, "membership": m["name"], "credits_added": credits,
-            "new_balance": u.credits_balance, "payment_status": "mock_paid"}
+    raise HTTPException(503, "当前仅支持运营人工开通，请通过会员页提交申请；未接入在线支付")
 
 
 @router.get("/history")

@@ -111,7 +111,7 @@ class MilvusStore:
     def search(self, user_id: int, book_id: int, query_vec: list[float], top_k: int) -> list[dict]:
         col = self._ensure_collection(user_id, book_id)
         if col is None:
-            return []
+            raise RuntimeError('Milvus 检索集合不可用')
         try:
             res = col.search(
                 [query_vec], "embedding",
@@ -134,7 +134,7 @@ class MilvusStore:
             return out
         except Exception as e:
             log.warning("Milvus search 失败: %s", e)
-            return []
+            raise RuntimeError('Milvus 检索失败') from e
 
     def count_chunks(self, user_id: int, book_id: int, chapter_id: int | None = None) -> int:
         col = self._ensure_collection(user_id, book_id)

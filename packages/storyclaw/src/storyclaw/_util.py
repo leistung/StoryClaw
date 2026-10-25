@@ -28,6 +28,10 @@ async def llm_respond(state: dict[str, Any], system_prompt: str, user_message: s
         )
         user_message = trim_user_message(user_message)
     llm, model_id = await get_llm(mc)
+    if state.get("response_max_tokens"):
+        llm = llm.bind(max_tokens=int(state["response_max_tokens"]))
+    if state.get("response_format"):
+        llm = llm.bind(response_format=state["response_format"])
     conv = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
     resp = await llm.ainvoke(conv)
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
@@ -58,6 +62,10 @@ async def stream_llm_respond(
         )
         user_message = trim_user_message(user_message)
     llm, model_id = await get_llm(mc)
+    if state.get("response_max_tokens"):
+        llm = llm.bind(max_tokens=int(state["response_max_tokens"]))
+    if state.get("response_format"):
+        llm = llm.bind(response_format=state["response_format"])
     conv = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
     buf: list[str] = []
     in_t = out_t = 0

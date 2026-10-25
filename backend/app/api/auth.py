@@ -12,25 +12,23 @@ from ..services.configs import load_pricing
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=TokenOut)
+@router.post("/register", response_model=UserOut)
 async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
-    if data.version not in ("local", "business"):
-        raise HTTPException(400, "version 必须为 local 或 business")
+    if len(data.password.encode("utf-8")) > 72:
+        raise HTTPException(400, "密码 UTF-8 编码不能超过 72 字节")
     exists = await db.scalar(select(User).where(User.username == data.username))
     if exists:
         raise HTTPException(400, "用户名已存在")
-    u = User(username=data.username, password_hash=hash_password(data.password), version=data.version)
+    u = User(username=data.username, password_hash=hash_password(data.password), version="business")
     db.add(u)
+    await db.flush()
+    free = load_pricing().get("defaults", {}).get("free_quota", 0) or 0
+    if free:
+        u.credits_balance = free
+        db.add(CreditsLedger(user_id=u.id, delta=free, reason="bonus"))
     await db.commit()
     await db.refresh(u)
-    if data.version == "business":
-        free = load_pricing().get("defaults", {}).get("free_quota", 0) or 0
-        if free:
-            u.credits_balance = free
-            db.add(CreditsLedger(user_id=u.id, delta=free, reason="bonus"))
-            await db.commit()
-            await db.refresh(u)
-    return TokenOut(user=UserOut.model_validate(u), token=create_access_token(str(u.id)))
+    return UserOut.model_validate(u)
 
 
 @router.post("/login", response_model=TokenOut)

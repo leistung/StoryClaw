@@ -29,6 +29,8 @@ from ..schemas import (
     DialoguePolishIn, MultiWriteIn, MultiWriteItem, MultiWriteOut,
     PolishIn, PolishOut, ReadingConfigGenIn, SceneEnhanceIn, TitleGenIn,
 )
+from ..services.credits import debit
+from ..services.revisions import snapshot, assert_editable, chapter_hash, guard_write
 from ..services import pricing as pricing_svc
 from ..services.memory import load_user_memory
 from ..services.skill_loader import build_write_context
@@ -39,9 +41,7 @@ router = APIRouter(prefix="", tags=["writing-skills"])
 # ============ 公共辅助 ============
 
 def _model_choice(u: User, choice: dict | None) -> dict:
-    if u.version == "local":
-        return {"kind": "local", "config_id": (choice or {}).get("config_id"), "user_id": u.id}
-    return {"kind": "business", "model_id": (choice or {}).get("model_id") or "gpt-4o-mini"}
+    return {"kind": "business", "model_id": (choice or {}).get("model_id")}
 
 
 async def _save_assistant_msg(db: AsyncSession, u: User, thread_id: str,
@@ -52,7 +52,7 @@ async def _save_assistant_msg(db: AsyncSession, u: User, thread_id: str,
     cost = 0
     if u2.version == "business":
         cost = pricing_svc.compute_cost(model_id, in_t, out_t)
-        u2.credits_balance -= cost
+        await debit(db, u2, cost)
         db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="consume", model=model_id,
                              in_tokens=in_t, out_tokens=out_t, ref_msg_id=ref_user_msg_id))
     am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=content,
@@ -121,6 +121,7 @@ async def polish_chapter(
         "thread_id": thread_id,
         "messages": [{"role": "user", "content": data.selected_text}],
         "model_choice": mc, "user_memory": user_mem, "context": ctx,
+        "intent": "polish",
         "selected_text": data.selected_text,
         "polish_goal": data.polish_goal or "提升文笔与画面感",
         "current_content": c.content or "",
@@ -171,11 +172,13 @@ async def continue_writing(
     user_mem = await load_user_memory(u.id, db)
     ctx = await build_write_context(u.id, c.book_id, cid, db)
 
+    ctx["fragment_max_words"] = data.max_words
     input_state = {
         "user_id": u.id, "book_id": c.book_id, "chapter_id": cid,
         "thread_id": thread_id,
         "messages": [{"role": "user", "content": "请基于上文续写片段"}],
         "model_choice": mc, "user_memory": user_mem, "context": ctx,
+        "intent": "continue",
         "prefix_text": prefix,
         "current_content": c.content or "",
     }
@@ -207,6 +210,9 @@ async def multi_write(
     if not b or b.user_id != u.id:
         raise HTTPException(404, "书籍不存在")
 
+    from ..services.planning import require_outline
+    await require_outline(db,bid)
+
     start = data.start_number
     if data.end_number:
         end = data.end_number
@@ -223,6 +229,7 @@ async def multi_write(
     mc = _model_choice(u, data.llm_choice)
     user_mem = await load_user_memory(u.id, db)
     outline = await _load_outline(db, bid)
+    if outline.get('planning_mode')=='serial':raise HTTPException(409,'连载模式请逐章确认章纲并写作；不批量预写未确认的章节')
 
     items: list[MultiWriteItem] = []
     total_in, total_out, total_cost = 0, 0, 0
@@ -243,88 +250,58 @@ async def multi_write(
             await db.refresh(nc)
             chapters_by_num[num] = nc
 
+    uid=u.id
+    target_words=b.per_chapter_words
+    chapter_ids={number:chapter.id for number,chapter in chapters_by_num.items()}
+    for cid in chapter_ids.values():await assert_editable(db,cid)
     prev_summary = ""
-    for num in range(start, end + 1):
-        ch = chapters_by_num[num]
+    for num in range(start,end+1):
+        ch=await db.get(Chapter,chapter_ids[num])
+        cid=ch.id;title=ch.title;original_hash=chapter_hash(ch)
         if data.skip_existing and ch.content:
-            items.append(MultiWriteItem(chapter_id=ch.id, number=num, title=ch.title,
-                                        word_count=ch.word_count, status="skipped"))
-            prev_summary = (ch.content or "")[-600:]
+            items.append(MultiWriteItem(chapter_id=cid,number=num,title=title,word_count=ch.word_count,status="skipped"))
+            prev_summary=ch.content[-600:]
             continue
-
-        outline_node = {}
-        for vol in outline.get("volumes", []) or []:
-            for c in vol.get("chapters", []) or []:
-                if int(c.get("number", 0)) == num:
-                    outline_node = c
-                    break
-
-        # 复用 build_write_context：注入 设定(角色/场景/物品/情节) + RAG 记忆检索
-        ctx = await build_write_context(u.id, bid, ch.id, db)
-        ctx["chapter_meta"] = {
-            "id": ch.id, "number": num, "title": ch.title,
-            "per_chapter_words": b.per_chapter_words,
-        }
-        ctx["outline_node"] = outline_node
-        ctx["prev_chapter_summary"] = prev_summary
-        input_state = {
-            "user_id": u.id, "book_id": bid, "chapter_id": ch.id,
-            "thread_id": thread_id,
-            "messages": [{"role": "user", "content": f"请撰写第{num}章 {ch.title}"}],
-            "model_choice": mc, "user_memory": user_mem,
-            "context": ctx,
-            "current_content": "",
-        }
         try:
-            final = await run_agent(input_state, thread_id)
-            content = final.get("draft_content", "") or ""
-            if not content:
-                items.append(MultiWriteItem(chapter_id=ch.id, number=num, title=ch.title,
-                                            word_count=0, status="error",
-                                            error=final.get("error", "未返回内容")))
-                continue
-            wc = count_words(content)
-            ch.content = content
-            ch.word_count = wc
-            if ch.title.endswith("待定") and outline_node.get("title"):
-                ch.title = outline_node["title"]
+            ctx=await build_write_context(uid,bid,cid,db)
+            outline_node=next((node for vol in outline.get('volumes',[]) for node in vol.get('chapters',[]) if int(node.get('number',0))==num),{})
+            ctx['chapter_meta']={'id':cid,'number':num,'title':title,'per_chapter_words':target_words}
+            ctx['outline_node']=outline_node
+            ctx['prev_chapter_summary']=prev_summary or ctx.get('prev_chapter_summary','')
+            final=await run_agent({'user_id':uid,'book_id':bid,'chapter_id':cid,'thread_id':thread_id,
+                'messages':[{'role':'user','content':f'请撰写第{num}章 {title}。目标{target_words}字，不超出本章大纲。\n{data.instruction}'}],
+                'model_choice':mc,'user_memory':user_mem,'context':ctx,'current_content':'','intent':'write'},thread_id)
+            content=final.get('draft_content','')
+            if not content:raise HTTPException(502,'本章未返回正文')
+            await guard_write(db,ch,original_hash)
+            tu=final.get('token_usage') or {}
+            ti,to=int(tu.get('in_tokens',0)),int(tu.get('out_tokens',0));mid=tu.get('model_id','')
+            cost=pricing_svc.compute_cost(mid,ti,to)
+            payer=await db.get(User,uid)
+            await debit(db,payer,cost)
+            db.add(CreditsLedger(user_id=uid,delta=-cost,reason='multi-write',model=mid,in_tokens=ti,out_tokens=to))
+            await snapshot(db,ch,'ai-batch')
+            ch.content=content;ch.word_count=count_words(content);ch.rag_status='pending'
+            if title.endswith('待定') and outline_node.get('title'):ch.title=outline_node['title']
+            result_title=ch.title;wc=ch.word_count
+            # Persist the chapter, its previous version, and debit as one unit.
             await db.commit()
-            # 后台同步：从本章内容提取并更新 角色/场景/物品/情节 设定
-            from ..services.setting_sync import launch as launch_setting_sync
-            launch_setting_sync(bid, ch.id, u.id, mc)
-            prev_summary = content[-600:]
-            tu = final.get("token_usage") or {}
-            ti, to = int(tu.get("in_tokens", 0)), int(tu.get("out_tokens", 0))
-            model_id = tu.get("model_id", "") or model_id
-            total_in += ti
-            total_out += to
-            items.append(MultiWriteItem(chapter_id=ch.id, number=num, title=ch.title,
-                                        word_count=wc, status="generated"))
-        except Exception as e:
-            items.append(MultiWriteItem(chapter_id=ch.id, number=num, title=ch.title,
-                                        word_count=0, status="error", error=str(e)))
-
-    # 批量积分扣减
-    u2 = await db.get(User, u.id)
-    cost = 0
-    if u2.version == "business" and model_id:
-        cost = pricing_svc.compute_cost(model_id, total_in, total_out)
-        u2.credits_balance -= cost
-        db.add(CreditsLedger(user_id=u2.id, delta=-cost, reason="multi-write", model=model_id,
-                             in_tokens=total_in, out_tokens=total_out))
-    summary = f"[批量生成] 第{start}-{end}章：" + ", ".join(
-        f"第{it.number}章{it.status}" for it in items)
-    am = Message(user_id=u2.id, thread_id=thread_id, role="assistant", content=summary,
-                 model=model_id, in_tokens=total_in, out_tokens=total_out, credits_cost=cost)
-    db.add(am)
+            total_in+=ti;total_out+=to;total_cost+=cost;model_id=mid or model_id
+            prev_summary=content[-600:]
+            items.append(MultiWriteItem(chapter_id=cid,number=num,title=result_title,word_count=wc,status='generated'))
+            if data.sync_settings:
+                from ..services.setting_sync import launch
+                launch(bid,cid,uid,mc)
+        except Exception as exc:
+            await db.rollback()
+            error=str(exc.detail) if isinstance(exc,HTTPException) else '本章生成失败，请核对内容后重试'
+            items.append(MultiWriteItem(chapter_id=cid,number=num,title=title,word_count=0,status='error',error=error))
+    summary=f"[批量生成] 第{start}-{end}章："+', '.join(f'第{it.number}章{it.status}' for it in items)
+    db.add(Message(user_id=uid,thread_id=thread_id,role='assistant',content=summary,model=model_id,
+                   in_tokens=total_in,out_tokens=total_out,credits_cost=total_cost))
     await db.commit()
-    await db.refresh(am)
-
-    return MultiWriteOut(
-        book_id=bid, chapters=items, model=model_id,
-        total_in_tokens=total_in, total_out_tokens=total_out,
-        total_credits_cost=cost, thread_id=thread_id,
-    )
+    return MultiWriteOut(book_id=bid,chapters=items,model=model_id,total_in_tokens=total_in,
+                         total_out_tokens=total_out,total_credits_cost=total_cost,thread_id=thread_id)
 
 
 # ============ 4. 分析 skill ============
@@ -339,6 +316,10 @@ async def analyze_book(
     b = await db.get(Book, bid)
     if not b or b.user_id != u.id:
         raise HTTPException(404, "书籍不存在")
+
+    if data.skill=='plot-planning':
+        from ..services.planning import require_outline
+        await require_outline(db,bid)
 
     valid_skills = {"plot-planning", "character-development", "consistency-check",
                     "book-summary", "outline-planning"}
@@ -368,13 +349,16 @@ async def analyze_book(
             Chapter.number >= int(cr.get("start", 1)),
             Chapter.number <= int(cr.get("end", 10)),
         ).order_by(Chapter.number))
+        selected_chapters = list(rs)
+        evidence_limit = min(2400, max(200, 18000 // max(1, len(selected_chapters)) - 60))
         parts = []
-        for c in rs:
+        for c in selected_chapters:
             if c.content:
                 txt = re.sub(r"<[^>]+>", "", c.content)
                 txt = re.sub(r"\s+", "", txt)
-                parts.append(f"第{c.number}章 {c.title}：{txt[:300]}")
-        chapters_brief = "\n\n".join(parts)[:4000] or "（无章节内容）"
+                excerpt = txt if len(txt) <= evidence_limit else txt[:evidence_limit//2] + " … " + txt[-evidence_limit//2:]
+                parts.append(f"第{c.number}章 {c.title}：{excerpt}")
+        chapters_brief = "\n\n".join(parts) or "（无章节内容）"
 
     input_state = {
         "user_id": u.id, "book_id": bid, "chapter_id": None,
@@ -604,3 +588,42 @@ async def assist_reading_config_gen(
     am, cost = await _save_assistant_msg(db, u, thread_id, content, model_id, in_t, out_t, um.id)
     return AssistOut(content=content, model=model_id, in_tokens=in_t, out_tokens=out_t,
                      credits_cost=cost, thread_id=thread_id, message_id=am.id)
+
+
+@router.post("/chapters/{cid}/plan")
+async def plan_chapter_scenes(cid: int, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """在生成正文前，生成并保存 3~5 个有目标和字数分配的场景。"""
+    from storyclaw.scene_plan import generate_scene_plan
+    from ..models import ConfigEntity
+    chapter = await db.get(Chapter, cid)
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    book = await db.get(Book, chapter.book_id)
+    if not book or book.user_id != u.id:
+        raise HTTPException(404, "章节不存在")
+    from ..services.planning import require_outline
+    await require_outline(db,book.id)
+    from ..services.serial import require_blueprint
+    await require_blueprint(db,chapter)
+    ctx = await build_write_context(u.id, book.id, cid, db)
+    try:
+        plan,in_t,out_t,model_id=await generate_scene_plan({'title':book.title,'intro':book.intro,'per_chapter_words':book.per_chapter_words},ctx,_model_choice(u,None))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(502, "场景任务单未通过结构校验，请重试") from exc
+    name = f"第{chapter.number}章场景任务单"
+    row = await db.scalar(select(ConfigEntity).where(ConfigEntity.book_id == book.id,
+        ConfigEntity.entity_type == "plot", ConfigEntity.name == name))
+    if not row:
+        row = ConfigEntity(book_id=book.id, entity_type="plot", name=name, category="chapter-plan", description="")
+        db.add(row)
+    from ..services.serial import inputs
+    from storyclaw.serial import digest
+    if (await inputs(db,chapter))[3]!=ctx.get('dependency_hash'):raise HTTPException(409,'规划期间参考资料变化，请重新规划场景')
+    row.extra_json = {**plan.model_dump(),'_dependencies':ctx.get('dependency_hash'),'_blueprint_hash':digest(ctx.get('outline_node'))}
+    row.description = "；".join(s.title for s in plan.scenes)
+    cost = pricing_svc.compute_cost(model_id, in_t, out_t)
+    await debit(db, u, cost)
+    db.add(CreditsLedger(user_id=u.id, delta=-cost, reason="chapter-plan", model=model_id, in_tokens=in_t, out_tokens=out_t))
+    await db.commit()
+    return {"chapter_id": cid, **plan.model_dump(), "model": model_id, "in_tokens": in_t,
+            "out_tokens": out_t, "credits_cost": cost}

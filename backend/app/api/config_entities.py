@@ -20,7 +20,7 @@ from ..schemas import (
 
 router = APIRouter(prefix="/books/{bid}/config", tags=["config-entities"])
 
-VALID_TYPES = {"character", "scene", "item", "plot", "outline"}
+VALID_TYPES = {"character", "scene", "item", "plot", "outline", "world"}
 
 
 async def _check_book(bid: int, u: User, db: AsyncSession) -> Book:
@@ -67,7 +67,10 @@ async def create_entity(
     """创建配置实体."""
     if entity_type not in VALID_TYPES:
         raise HTTPException(400, f"未知类型: {entity_type}")
-    await _check_book(bid, u, db)
+    book=await _check_book(bid,u,db)
+    await db.refresh(book,with_for_update=True)
+    from ..services.serial import assert_book_idle,invalidate_book
+    await assert_book_idle(db,bid)
     e = ConfigEntity(
         book_id=bid, entity_type=entity_type, category=data.category,
         name=data.name, description=data.description,
@@ -77,6 +80,7 @@ async def create_entity(
     await db.flush()
     for kv in data.kv:
         db.add(EntityKv(entity_type=entity_type, entity_id=e.id, key=kv.key, value=kv.value))
+    await invalidate_book(db,bid,'作者设定已变更，请复核既有正文与后续章纲')
     await db.commit()
     await db.refresh(e)
     return await _entity_to_out(db, e, entity_type)
@@ -91,7 +95,10 @@ async def update_entity(
     """更新配置实体（含 kv 替换）."""
     if entity_type not in VALID_TYPES:
         raise HTTPException(400, f"未知类型: {entity_type}")
-    await _check_book(bid, u, db)
+    book=await _check_book(bid,u,db)
+    await db.refresh(book,with_for_update=True)
+    from ..services.serial import assert_book_idle,invalidate_book
+    await assert_book_idle(db,bid)
     e = await db.get(ConfigEntity, eid)
     if not e or e.book_id != bid or e.entity_type != entity_type:
         raise HTTPException(404, "实体不存在")
@@ -112,6 +119,7 @@ async def update_entity(
             EntityKv.entity_type == entity_type, EntityKv.entity_id == eid))
         for kv in data.kv:
             db.add(EntityKv(entity_type=entity_type, entity_id=eid, key=kv.key, value=kv.value))
+    await invalidate_book(db,bid,'作者设定已变更，请复核既有正文与后续章纲')
     await db.commit()
     await db.refresh(e)
     return await _entity_to_out(db, e, entity_type)
@@ -126,13 +134,17 @@ async def delete_entity(
     """删除配置实体（含 kv 级联删除）."""
     if entity_type not in VALID_TYPES:
         raise HTTPException(400, f"未知类型: {entity_type}")
-    await _check_book(bid, u, db)
+    book=await _check_book(bid,u,db)
+    await db.refresh(book,with_for_update=True)
+    from ..services.serial import assert_book_idle,invalidate_book
+    await assert_book_idle(db,bid)
     e = await db.get(ConfigEntity, eid)
     if not e or e.book_id != bid or e.entity_type != entity_type:
         raise HTTPException(404, "实体不存在")
     await db.execute(delete(EntityKv).where(
         EntityKv.entity_type == entity_type, EntityKv.entity_id == eid))
     await db.delete(e)
+    await invalidate_book(db,bid,'作者设定已变更，请复核既有正文与后续章纲')
     await db.commit()
     return {"ok": True, "id": eid}
 

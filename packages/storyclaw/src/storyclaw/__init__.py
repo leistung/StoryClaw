@@ -31,3 +31,6 @@ __all__ = [
     "build_checkpointer",
     "AgentState", "OutlineState",
 ]
+
+from .agent import StoryClaw
+__all__.append("StoryClaw")

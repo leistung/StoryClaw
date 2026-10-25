@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -65,14 +65,14 @@ export default function Community() {
   const [error, setError] = useState('')
 
   // 帖子列表
-  const { data: postList, isFetching: postsLoading } = useQuery({
+  const { data: postList, isFetching: postsLoading, error: postsError } = useQuery({
     queryKey: ['community-posts', page],
     queryFn: () => listPosts(page, PAGE_SIZE),
     enabled: !submittedQuery,
   })
 
   // 搜索
-  const { data: searchResult, isFetching: searchLoading } = useQuery<SearchResult>({
+  const { data: searchResult, isFetching: searchLoading, error: searchError } = useQuery<SearchResult>({
     queryKey: ['community-search', submittedQuery],
     queryFn: () => searchCommunity(submittedQuery),
     enabled: !!submittedQuery,
@@ -134,25 +134,9 @@ export default function Community() {
   const totalPages = postList ? Math.max(1, Math.ceil(postList.total / PAGE_SIZE)) : 1
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 animate-fade-up">
-      {/* 顶部标题 + 发帖按钮 */}
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2.5">
-          <span className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/25">
-            <MessageSquare size={20} />
-          </span>
-          <span className="bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent dark:from-indigo-400 dark:to-purple-400">
-            社区
-          </span>
-        </h1>
-        <Button
-          onClick={openEditor}
-          className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700 shadow-md shadow-indigo-500/20"
-        >
-          <Plus size={16} /> 发帖
-        </Button>
-      </div>
-
+    <div className="community-page animate-fade-up">
+      <header className="community-hero"><div><span className="section-overline">STORIES BRING US TOGETHER</span><h1>在故事之外，遇见同路人。</h1><p>交流写作经验，分享创作中的发现，也让好作品被看见。</p></div><Button onClick={openEditor}><Plus size={16}/>发布讨论</Button></header>
+      <div className="community-layout"><div className="community-feed"><div className="section-heading"><h2>创作交流</h2><span className="text-xs text-muted-foreground">{submittedQuery ? '搜索结果' : '最新讨论'}</span></div>
       {/* 搜索栏 */}
       <form onSubmit={onSearch} className="flex gap-2 mb-6">
         <div className="flex-1 relative">
@@ -172,6 +156,7 @@ export default function Community() {
         )}
       </form>
 
+      {(postsError && !submittedQuery || searchError && submittedQuery) && <div className="product-notice" role="alert">{extractError(submittedQuery ? searchError : postsError,'加载失败，请重试')}<Button variant="ghost" onClick={()=>void qc.invalidateQueries({queryKey:[submittedQuery?'community-search':'community-posts']})}>重试</Button></div>}
       {/* 内容区 */}
       {submittedQuery ? (
         // 搜索结果
@@ -233,10 +218,10 @@ export default function Community() {
             postList.items.map((p) => (
               <PostCard key={p.id} post={p} onClick={() => navigate(`/post/${p.id}`)} />
             ))
-          ) : (
+          ) : postsError ? null : (
             <div className="text-center text-muted-foreground py-16">
               <MessageSquare size={40} className="mx-auto text-muted-foreground/30 mb-3" />
-              <div>还没有帖子，点击右上角发帖成为第一个</div>
+              <h3>这里的第一个故事，等你来分享。</h3><p className="text-sm mt-2 mb-5">一个写作困惑、一段创作心得，都值得聊聊。</p><Button variant="outline" onClick={openEditor}>发起第一场讨论</Button>
             </div>
           )}
 
@@ -265,6 +250,7 @@ export default function Community() {
         </div>
       )}
 
+      </div><aside className="community-aside"><span className="section-overline">THE WRITER’S CORNER</span><h2>让讨论有收获</h2><p>描述故事背景，提出具体问题。分享作品前，先在书籍信息页发布公开版本。</p><Link to="/help#community">社区与作品分享指南 <ChevronRight size={14}/></Link><div className="community-note"><BookIcon size={22}/><h3>好作品，慢慢相遇。</h3><p>搜索书名可以找到已公开的作品。这里不展示私密草稿，也不填充虚构的热门内容。</p></div></aside></div>
       {/* 发帖编辑器 */}
       <Dialog open={showEditor} onOpenChange={setShowEditor}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -279,7 +265,7 @@ export default function Community() {
                 id="post-title"
                 value={editorForm.title}
                 onChange={(e) => setEditorForm({ ...editorForm, title: e.target.value })}
-                placeholder="帖子标题"
+                placeholder="你想和大家聊什么？" maxLength={200}
               />
             </div>
             <div className="space-y-1.5">
@@ -287,7 +273,7 @@ export default function Community() {
               <Textarea
                 id="post-content"
                 rows={12}
-                className="font-mono text-sm"
+                className="text-sm leading-7" maxLength={20000}
                 value={editorForm.content_text}
                 onChange={(e) =>
                   setEditorForm({
@@ -344,9 +330,9 @@ function SearchSection({
 
 function PostCard({ post, onClick }: { post: Post; onClick: () => void }) {
   return (
-    <Card className="card-lift group relative overflow-hidden p-4 cursor-pointer border-none shadow-sm" onClick={onClick}>
+    <Card className="community-post group" role="link" tabIndex={0} onKeyDown={e=>{if(e.key==='Enter')onClick()}} onClick={onClick}>
       {/* 左侧渐变装饰条 */}
-      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500 via-purple-500 to-fuchsia-500 opacity-70 group-hover:opacity-100 transition" />
+
       <div className="font-medium text-foreground truncate pl-2">{post.title}</div>
       <div className="text-sm text-muted-foreground mt-1.5 line-clamp-2 whitespace-pre-wrap pl-2">
         {post.content_text}

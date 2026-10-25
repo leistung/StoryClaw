@@ -1,188 +1,47 @@
-import { Outlet, Link, NavLink, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Feather, BookOpen, Users, HelpCircle, CreditCard, MessageCircle, Sun, Moon, LogOut, ArrowUpRight, Plus, LayoutDashboard, PanelLeftClose, Menu, Activity } from 'lucide-react'
+import { useState } from 'react'
 import { useAuthStore } from '@/stores/auth'
-import { getUnreadCount } from '@/lib/api'
+import api, { getUnreadCount } from '@/lib/api'
 import { useTheme } from '@/components/theme-provider'
-import {
-  LogOut,
-  Settings,
-  BookOpen,
-  HelpCircle,
-  CreditCard,
-  MessageCircle,
-  Shield,
-  LayoutGrid,
-  LogIn,
-  UserPlus,
-  Feather,
-  Sun,
-  Moon,
-} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 
-const navCls = ({ isActive }: { isActive: boolean }) =>
-  `px-2 py-1.5 text-sm rounded-lg flex items-center gap-1.5 transition ${
-    isActive
-      ? 'bg-primary/10 text-primary font-medium'
-      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-  }`
-
+const links = [
+  { to: '/', label: '创作首页', icon: LayoutDashboard },
+  { to: '/?view=books', label: '我的作品', icon: BookOpen },
+  { to: '/jobs', label: '任务中心', icon: Activity },
+  { to: '/community', label: '创作社区', icon: Users },
+  { to: '/messages', label: '消息中心', icon: MessageCircle },
+]
 export default function Layout() {
-  const user = useAuthStore((s) => s.user)
-  const logout = useAuthStore((s) => s.logout)
+  const user = useAuthStore(s => s.user)
+  const clearAuth = useAuthStore(s => s.logout)
+  const qc = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
   const { theme, toggle } = useTheme()
-  const isBusiness = user?.version === 'business'
-  const isAdmin = user?.is_admin === true
-
-  // 未读消息计数（仅登录后查询，用于导航 badge）
-  const { data: unreadData } = useQuery({
-    queryKey: ['unread-count'],
-    queryFn: getUnreadCount,
-    refetchInterval: 30 * 1000,
-    retry: false,
-    enabled: !!user,
-  })
-  const unread = unreadData?.unread ?? 0
-
-  const handleLogout = () => {
-    logout()
-    navigate('/')
-  }
-
-  return (
-    <div className="h-full flex flex-col">
-      <header className="glass border-b sticky top-0 z-20">
-        <div className="w-full max-w-[1600px] mx-auto px-4 md:px-8 h-14 flex items-center gap-3">
-          <Link to="/" className="flex items-center gap-2 shrink-0 mr-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
-              <Feather size={16} />
-            </div>
-            <span className="font-bold text-lg text-gray-900">StoryClaw</span>
-          </Link>
-
-          {user ? (
-            <>
-              <Badge variant={isBusiness ? 'default' : 'secondary'} className="hidden sm:inline-flex">
-                {isBusiness ? '商业版' : '本地版'}
-              </Badge>
-              {isBusiness && (
-                <Badge variant="outline" className="hidden sm:inline-flex bg-amber-50 text-amber-700 border-amber-200">
-                  剩余积分 {user?.credits_balance ?? 0}
-                </Badge>
-              )}
-            </>
-          ) : (
-            <Badge variant="secondary" className="hidden sm:inline-flex">
-              未登录
-            </Badge>
-          )}
-
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={toggle}
-              title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-              className="ml-1 flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            >
-              {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
-            </button>
-            {user ? (
-              <>
-                <NavLink to="/" end className={navCls}>
-                  <LayoutGrid size={16} /> 我的作品
-                </NavLink>
-                <NavLink to="/community" className={navCls}>
-                  <BookOpen size={16} /> 社区
-                </NavLink>
-                <NavLink to="/help" className={navCls}>
-                  <HelpCircle size={16} /> 帮助
-                </NavLink>
-                <NavLink to="/recharge" className={navCls}>
-                  <CreditCard size={16} /> 充值
-                </NavLink>
-                <NavLink to="/messages" className={`${navCls} relative`}>
-                  <MessageCircle size={16} /> 消息
-                  {unread > 0 && (
-                    <span className="absolute -top-1 -right-1 text-[10px] min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-red-500 text-white">
-                      {unread > 99 ? '99+' : unread}
-                    </span>
-                  )}
-                </NavLink>
-                {isAdmin && (
-                  <NavLink to="/admin" className={navCls}>
-                    <Shield size={16} /> 后台
-                  </NavLink>
-                )}
-                {!isBusiness && (
-                  <NavLink to="/llm-configs" className={navCls}>
-                    <Settings size={16} /> 配置
-                  </NavLink>
-                )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger className="ml-1 flex items-center gap-2 rounded-lg p-1 hover:bg-muted transition outline-none">
-                    <Avatar className="w-7 h-7">
-                      <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs">
-                        {user?.username?.slice(0, 1).toUpperCase() ?? 'U'}
-                      </AvatarFallback>
-                    </Avatar>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-52">
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel className="flex flex-col gap-0.5">
-                        <span className="text-sm font-medium text-foreground">{user?.username}</span>
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {isBusiness ? '商业版' : '本地版'}
-                          {isBusiness ? ` · 积分 ${user?.credits_balance ?? 0}` : ''}
-                        </span>
-                      </DropdownMenuLabel>
-                    </DropdownMenuGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-                      <LogOut size={16} /> 退出登录
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            ) : (
-              <>
-                <NavLink to="/community" className={navCls}>
-                  <BookOpen size={16} /> 社区
-                </NavLink>
-                <NavLink to="/help" className={navCls}>
-                  <HelpCircle size={16} /> 帮助
-                </NavLink>
-                <NavLink to="/login">
-                  <Button variant="outline" size="sm">
-                    <LogIn size={15} /> 登录
-                  </Button>
-                </NavLink>
-                <NavLink to="/register">
-                  <Button size="sm">
-                    <UserPlus size={15} /> 注册
-                  </Button>
-                </NavLink>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-      <main className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 flex flex-col min-h-0 w-full max-w-[1600px] mx-auto px-4 md:px-8 py-6">
-          <Outlet />
-        </div>
-      </main>
-    </div>
-  )
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [collapsed,setCollapsed]=useState(()=>localStorage.getItem('sc-sidebar-collapsed')==='1')
+  const toggleSidebar=()=>setCollapsed(value=>{localStorage.setItem('sc-sidebar-collapsed',value?'0':'1');return !value})
+  const { data } = useQuery({ queryKey: ['unread-count', user?.id], queryFn: getUnreadCount, enabled: !!user, refetchInterval: 30000, retry: false })
+  const wallet = useQuery({ queryKey: ['wallet'], queryFn: async () => (await api.get<{credits_balance:number}>('/wallet')).data, enabled: !!user, refetchInterval: 10000 })
+  const logout = () => { qc.clear(); clearAuth(); navigate('/login') }
+  return <div className={`studio-shell ${mobileOpen ? 'sidebar-open' : ''} ${collapsed ? 'sidebar-collapsed' : ''}`}>
+    <button className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMobileOpen(false)} />
+    <aside className="studio-sidebar">
+      <div className="sidebar-brand-row"><NavLink to="/" className="studio-brand" title="StoryClaw 首页"><span className="brand-mark"><Feather size={23}/></span><span className="brand-copy">StoryClaw<small>创作，让故事生长</small></span></NavLink><button className="sidebar-toggle" onClick={toggleSidebar} aria-label={collapsed?'展开侧边栏':'收起侧边栏'} aria-expanded={!collapsed} title={collapsed?'展开侧边栏':'收起侧边栏'}><PanelLeftClose size={16}/></button></div>
+      <button className="studio-new" aria-label="新建作品" title="新建作品" onClick={() => { navigate('/?new=1'); setMobileOpen(false) }}><Plus size={17} /><span className="new-label">新建作品</span><span className="new-extra">＋</span></button>
+      <div className="sidebar-nav-scroll"><p className="nav-caption">工作空间</p>
+      <nav className="studio-navigation">{links.map(item => {
+        const active = item.to === '/?view=books' ? location.pathname === '/' && location.search.includes('view=books') : item.to === '/' ? location.pathname === '/' && !location.search.includes('view=books') : location.pathname.startsWith(item.to)
+        return <NavLink key={item.to} to={item.to} title={item.label} onClick={() => setMobileOpen(false)} className={active ? 'is-active' : ''}><item.icon size={18} /><span>{item.label}</span>{item.to === '/messages' && !!data?.unread && <b className="unread-pill">{data.unread}</b>}</NavLink>
+      })}</nav>
+      <p className="nav-caption mt-7">支持与服务</p>
+      <nav className="studio-navigation"><NavLink to="/recharge" title="会员与积分" className={({isActive})=>isActive?"is-active":""} onClick={() => setMobileOpen(false)}><CreditCard size={18} /><span>会员与积分</span></NavLink><NavLink to="/help" title="使用指南" className={({isActive})=>isActive?"is-active":""} onClick={() => setMobileOpen(false)}><HelpCircle size={18} /><span>使用指南</span><ArrowUpRight size={13} className="ml-auto" /></NavLink></nav>
+      </div><div className="sidebar-bottom"><div className="credits-panel"><div><span className="status-dot" /> 灵感续航</div><strong>{(wallet.data?.credits_balance ?? user?.credits_balance ?? 0).toLocaleString()} <small>积分可用</small></strong><NavLink to="/recharge">为下一个好故事做好准备 <ArrowUpRight size={14} /></NavLink></div>
+      <div className="sidebar-user"><span className="user-monogram">{user?.username.slice(0,1).toUpperCase()}</span><div><strong>{user?.username}</strong><small>{user?.is_admin ? '管理员 · 创作者' : '创作者'}</small></div><button aria-label="退出登录" onClick={logout}><LogOut size={16} /></button></div></div>
+    </aside>
+    <div className="studio-main"><header className="studio-topbar"><div className="flex items-center gap-3"><button className="md:hidden" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={20} /></button><span className="topbar-breadcrumb">工作空间 <span>/</span> {location.pathname === '/' ? '创作工作台' : links.find(x => x.to === location.pathname)?.label || ({'/help':'使用指南','/recharge':'会员与积分'}[location.pathname] ?? 'StoryClaw')}</span></div><div className="flex items-center gap-3"><span className="studio-ready"><span className="status-dot" /> 为你的下一章准备就绪</span><Button size="icon" variant="ghost" onClick={toggle} aria-label="切换主题">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</Button><NavLink to="/help" title="使用指南" className="topbar-help">帮助中心 <ArrowUpRight size={13}/></NavLink></div></header><main className="studio-content"><Outlet /></main></div>
+  </div>
 }

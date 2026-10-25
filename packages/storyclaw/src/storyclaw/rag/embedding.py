@@ -81,16 +81,26 @@ async def embed_texts(texts: list[str], cfg: dict | None = None) -> list[list[fl
     async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
+            payload = {"model": c["model"], "input": batch, "encoding_format": "float"}
+            if c.get("dimensions") is not None:
+                payload["dimensions"] = c["dimensions"]
             resp = await client.post(
                 f"{c['base_url']}/embeddings",
                 headers={"Authorization": f"Bearer {c['api_key']}", "Content-Type": "application/json"},
-                json={"model": c["model"], "input": batch, "encoding_format": "float"},
+                json=payload,
             )
             if resp.status_code != 200:
                 raise ValueError(f"Embedding API 调用失败 {resp.status_code}: {resp.text[:300]}")
             data = resp.json()
-            for item in data["data"]:
-                results.append(item["embedding"])
+            items = sorted(data.get("data", []), key=lambda item: item["index"])
+            if [item["index"] for item in items] != list(range(len(batch))):
+                raise ValueError("Embedding 返回数量或索引不匹配")
+            import math
+            for item in items:
+                vector = item["embedding"]
+                if len(vector) != settings.milvus_dim or any(type(v) not in (int, float) or not math.isfinite(v) for v in vector):
+                    raise ValueError(f"Embedding 维度必须为 {settings.milvus_dim}，且数值必须有效；更换模型需重建索引")
+                results.append(vector)
     return results
 
 

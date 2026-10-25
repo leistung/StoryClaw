@@ -44,6 +44,7 @@ def build_chat_client(
     base_url: str = "",
     temperature: float = 0.7,
     max_tokens: int = 8192,
+    extra_body: dict | None = None,
 ):
     """按格式构建 chat client。
 
@@ -72,6 +73,8 @@ def build_chat_client(
     }
     if base_url:
         kw["base_url"] = base_url
+    if extra_body:
+        kw["extra_body"] = extra_body
     return ChatOpenAI(**kw)
 
 

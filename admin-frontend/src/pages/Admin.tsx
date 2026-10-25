@@ -1,6 +1,9 @@
+import ProductOperations from '@/components/ProductOperations'
+import { PlatformOverview, PlatformModels, PlatformUserData, PlatformLogs } from '@/components/AdminPlatform'
+import { useAuthStore } from '@/stores/auth'
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import { ApiError } from '@/lib/api'
 import { toast } from 'sonner'
 import {
   listAdminUsers,
@@ -23,7 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 
-type Tab = 'users' | 'report' | 'pricing' | 'membership'
+type Tab = 'operations' | 'models' | 'data' | 'logs' | 'users' | 'report' | 'pricing' | 'membership'
 
 function formatDate(s: string | null): string {
   if (!s) return ''
@@ -37,7 +40,7 @@ function formatDate(s: string | null): string {
 }
 
 function isForbidden(err: unknown): boolean {
-  return axios.isAxiosError(err) && err.response?.status === 403
+  return err instanceof ApiError && err.status === 403
 }
 
 function ForbiddenNotice() {
@@ -68,17 +71,24 @@ function Loading() {
 }
 
 export default function Admin() {
-  const [tab, setTab] = useState<Tab>('users')
+  const [tab, setTab] = useState<Tab>('models')
+  const user = useAuthStore(s => s.user)
+  if (!user?.is_admin) return <ForbiddenNotice />
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">后台管理</h1>
-        <Badge variant="secondary">管理员控制台</Badge>
+        <h1 className="text-2xl font-bold">运营中台</h1>
+        <Badge variant="secondary">平台管理</Badge>
       </div>
 
+      <PlatformOverview />
       <Tabs value={tab} onValueChange={(v) => v && setTab(v as Tab)}>
-        <TabsList variant="line" className="w-full justify-start h-10 gap-1 mb-4">
+        <TabsList variant="line" className="w-full justify-start h-auto flex-wrap gap-1 mb-6">
+          <TabsTrigger value="operations">平台运营</TabsTrigger>
+          <TabsTrigger value="models">平台模型</TabsTrigger>
+          <TabsTrigger value="data">用户数据与积分</TabsTrigger>
+          <TabsTrigger value="logs">日志与审计</TabsTrigger>
           <TabsTrigger value="users"><Users size={16} /> 用户管理</TabsTrigger>
           <TabsTrigger value="report"><BarChart3 size={16} /> 积分报表</TabsTrigger>
           <TabsTrigger value="pricing"><DollarSign size={16} /> 定价配置</TabsTrigger>
@@ -86,6 +96,10 @@ export default function Admin() {
         </TabsList>
 
         <div className="flex-1 min-h-0">
+          <TabsContent value="operations"><ProductOperations/></TabsContent>
+          <TabsContent value="models"><PlatformModels /></TabsContent>
+          <TabsContent value="data"><PlatformUserData /></TabsContent>
+          <TabsContent value="logs"><PlatformLogs /></TabsContent>
           <TabsContent value="users"><UsersPanel /></TabsContent>
           <TabsContent value="report"><ReportPanel /></TabsContent>
           <TabsContent value="pricing"><ConfigPanel kind="pricing" /></TabsContent>
@@ -97,9 +111,10 @@ export default function Admin() {
 }
 
 function UsersPanel() {
+  const [page, setPage] = useState(1)
   const { data, isFetching, error, refetch } = useQuery<AdminUser[]>({
-    queryKey: ['admin-users'],
-    queryFn: listAdminUsers,
+    queryKey: ['admin-users', page],
+    queryFn: () => listAdminUsers(page),
     retry: false,
   })
 
@@ -112,7 +127,7 @@ function UsersPanel() {
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <div>
           <CardTitle>用户管理</CardTitle>
-          <CardDescription className="mt-1">共 {data.length} 个用户</CardDescription>
+          <CardDescription className="mt-1">第 {page} 页 · 本页 {data.length} 个用户</CardDescription>
         </div>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw size={14} /> 刷新
@@ -124,7 +139,7 @@ function UsersPanel() {
             <TableRow>
               <TableHead>ID</TableHead>
               <TableHead>用户名</TableHead>
-              <TableHead>版本</TableHead>
+              <TableHead>角色</TableHead>
               <TableHead className="text-right">积分余额</TableHead>
               <TableHead className="text-center">管理员</TableHead>
               <TableHead>创建时间</TableHead>
@@ -137,7 +152,7 @@ function UsersPanel() {
                 <TableCell className="font-medium">{u.username}</TableCell>
                 <TableCell>
                   <Badge variant={u.version === 'business' ? 'default' : 'secondary'}>
-                    {u.version}
+                    {u.is_admin ? '管理员' : '创作者'}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums font-medium">{u.credits_balance}</TableCell>
@@ -162,6 +177,7 @@ function UsersPanel() {
             )}
           </TableBody>
         </Table>
+        <div className="flex justify-end items-center gap-3 mt-4"><Button variant="outline" disabled={page === 1} onClick={() => setPage(p => p-1)}>上一页</Button><span className="text-xs">第 {page} 页</span><Button variant="outline" disabled={data.length < 50} onClick={() => setPage(p => p+1)}>下一页</Button></div>
       </CardContent>
     </Card>
   )
@@ -320,7 +336,7 @@ function ConfigPanel({ kind }: { kind: 'pricing' | 'membership' }) {
           </CardTitle>
           <CardDescription className="mt-1">
             {kind === 'pricing'
-              ? '模型与积分换算关系（YAML 加载，JSON 编辑）'
+              ? '模型与积分换算关系（保存在数据库中）'
               : '月度/季度/年度会员金额与赠送积分'}
           </CardDescription>
         </div>

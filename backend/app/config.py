@@ -6,7 +6,6 @@ class Settings(BaseSettings):
 
     # DB
     database_url: str = "postgresql+asyncpg://storyclaw:storyclaw_dev_pwd@postgres:5432/storyclaw"
-    redis_url: str = "redis://redis:6379/0"
     # LangGraph
     langgraph_url: str = "http://langgraph-server:8000"
     # Milvus
@@ -21,8 +20,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080
     # App
+    mock_payments_enabled: bool = False
     log_level: str = "INFO"
-    cors_origins: str = "http://localhost,http://localhost:5173"
+    cors_origins: str = "http://localhost,http://localhost:5173,http://localhost:5174"
     configs_dir: str = "/app/configs"
     # 商业版本 LLM keys（服务端持有）
     openai_api_key: str = ""

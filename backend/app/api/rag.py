@@ -9,6 +9,7 @@ packages/storyclaw/src/storyclaw/rag/service.py；本模块只负责鉴权 + 结
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel,Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,11 @@ from storyclaw.rag import service as rag_svc
 from ..core.deps import get_current_user
 from ..database import get_db
 from ..models import Book, Chapter, User
+from ..services.revisions import chapter_hash, assert_editable
 from ..schemas import IngestOut, RagQueryIn, RagQueryOut, RagStatusOut
+
+class IngestReview(BaseModel):
+    reviewed_hash:str=Field(min_length=64,max_length=64)
 
 router = APIRouter(prefix="", tags=["rag"])
 
@@ -32,6 +37,7 @@ def _stable_id(name: str) -> int:
 @router.post("/chapters/{cid}/ingest", response_model=IngestOut)
 async def ingest_chapter_endpoint(
     cid: int,
+    data: IngestReview,
     u: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -45,11 +51,12 @@ async def ingest_chapter_endpoint(
     if not c.content:
         raise HTTPException(400, "章节无内容，请先生成或编辑")
 
-    # 解析 model_choice（实体抽取/向量化用；本地默认配置 / 商业默认模型）
-    if u.version == "business":
-        model_choice = {"kind": "business", "model_id": "gpt-4o-mini"}
-    else:
-        model_choice = {"kind": "local", "config_id": None, "user_id": u.id}
+    await assert_editable(db,cid)
+    before_hash=chapter_hash(c)
+    if data.reviewed_hash!=before_hash:raise HTTPException(409,'正文已变更，请审阅当前版本后重新确认')
+    c.rag_status='pending'
+    await db.commit()
+    model_choice = {"kind": "business"}
 
     result = await rag_svc.ingest_text(
         user_id=u.id, book_id=c.book_id, chapter_id=cid,
@@ -57,9 +64,15 @@ async def ingest_chapter_endpoint(
         model_choice=model_choice, extract_entities=True,
     )
 
+    await db.refresh(c)
+    if chapter_hash(c)!=before_hash:
+        result["error"]="正文在入库期间发生修改，请重新更新故事记忆"
     # 更新章节 rag_status
-    rag_status = "loaded" if result["chunks"] > 0 and not result.get("error") else "pending"
+    rag_status = "loaded" if result["chunks"] > 0 and not result.get("error") and result.get("stores", {}).get("vector") == "milvus" and result.get("stores", {}).get("graph") == "neo4j" else "pending"
     c.rag_status = rag_status
+    if rag_status=='loaded':
+        from ..services.serial import acknowledge_index
+        await acknowledge_index(db,c)
     await db.commit()
 
     return IngestOut(
@@ -87,9 +100,10 @@ async def rag_query(
     if not data.query.strip():
         raise HTTPException(400, "查询内容不能为空")
 
+    allowed=list(await db.scalars(select(Chapter.id).where(Chapter.book_id==data.book_id,Chapter.rag_status=="loaded")))
     result = await rag_svc.query_context(
         user_id=u.id, book_id=data.book_id,
-        query=data.query, top_k=data.top_k,
+        query=data.query, top_k=data.top_k, allowed_chapter_ids=allowed,
     )
 
     # 富化：章节标题/序号 + 实体稳定 id
@@ -135,7 +149,7 @@ async def rag_status(
     chapters = await db.scalars(select(Chapter).where(
         Chapter.book_id == bid).order_by(Chapter.number))
     ch_list = [
-        {"chapter_id": c.id, "number": c.number, "title": c.title, "has_content": bool(c.content)}
+        {"chapter_id": c.id, "number": c.number, "title": c.title, "has_content": bool(c.content), "rag_status":c.rag_status}
         for c in chapters
     ]
     status = await rag_svc.get_status(u.id, bid, ch_list)

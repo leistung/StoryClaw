@@ -29,13 +29,6 @@ models:
     context_limit: 32000
     enabled: true
     business_only: true
-  - id: custom-local
-    display_name: "本地自定义模型"
-    format: openai_chat
-    base_url: ""
-    context_limit: 32768
-    enabled: true
-    business_only: false
 
 defaults:
   default_temperature: 0.7

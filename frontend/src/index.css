@@ -7,13 +7,13 @@ body { margin: 0; }
 
 @layer base {
   :root {
-    --background: oklch(1 0 0);
+    --background: oklch(0.985 0.006 85);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.488 0.243 264.376);
+    --primary: oklch(0.43 0.075 170);
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
@@ -43,13 +43,13 @@ body { margin: 0; }
   }
 
   .dark {
-    --background: oklch(0.145 0 0);
+    --background: oklch(0.17 0.006 150);
     --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
+    --card: oklch(0.205 0.006 150);
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.704 0.155 262.4);
+    --primary: oklch(0.82 0.07 155);
     --primary-foreground: oklch(0.145 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
@@ -169,3 +169,5 @@ body { margin: 0; }
     animation: glow-pulse 5s ease-in-out infinite;
   }
 }
+/* 创作空间采用安静的纸面背景，避免装饰干扰长时间阅读。 */
+body::before { background: none !important; }

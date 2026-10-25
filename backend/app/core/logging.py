@@ -64,17 +64,30 @@ def add_request_logging(app: FastAPI) -> None:
         async def dispatch(self, request: Request, call_next):
             start = time.perf_counter()
             response = await call_next(request)
+            route = request.scope.get("route")
+            safe_path = getattr(route, "path", "<unmatched>")
             duration_ms = round((time.perf_counter() - start) * 1000, 1)
             logger = logging.getLogger("storyclaw.req")
             data: dict[str, Any] = {
                 "method": request.method,
-                "path": request.url.path,
+                "path": safe_path,
                 "status": response.status_code,
                 "duration_ms": duration_ms,
             }
             if request.scope.get("user"):
                 data["user_id"] = request.scope["user"]
             logger.info("request", extra={"data": data})
+            if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/v1/admin/logs"):
+                try:
+                    from ..database import AsyncSessionLocal
+                    from ..models.platform import PlatformEvent
+                    async with AsyncSessionLocal() as db:
+                        db.add(PlatformEvent(kind="request", actor_id=request.scope.get("user"),
+                            action=request.method, target=safe_path[:255],
+                            details={"status": response.status_code, "duration_ms": duration_ms}))
+                        await db.commit()
+                except Exception:
+                    logger.warning("request metadata persistence failed")
             return response
 
     app.add_middleware(_RequestLoggingMiddleware)

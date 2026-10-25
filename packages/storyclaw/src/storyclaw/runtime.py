@@ -18,21 +18,28 @@ def get_outline_graph():
     return graph_mod.outline_graph
 
 
-async def run_agent(input_state: dict, thread_id: str) -> dict:
+def fresh_input(input_state: dict) -> dict:
+    """新请求清理上次执行的临时状态；会话消息和持久记忆仍由图管理。"""
+    return {"intent": None, "active_skill": None, "draft_content": "", "analysis_report": "",
+            "review_round": 0, "review_feedback": "", "token_usage": {}, "error": None,
+            "modify_request": "", "selected_text": "", "prefix_text": "", **input_state}
+
+
+async def _run_graph(input_state: dict, thread_id: str) -> dict:
     """非流式调用 agent，返回最终 state（合并所有节点 diff）。"""
     config = {"configurable": {"thread_id": thread_id}}
     final: dict = {}
-    async for chunk in get_graph().astream(input_state, config=config, stream_mode="updates"):
+    async for chunk in get_graph().astream(fresh_input(input_state), config=config, stream_mode="updates"):
         for node, diff in (chunk or {}).items():
             if isinstance(diff, dict):
                 final.update(diff)
     return final
 
 
-async def stream_agent(input_state: dict, thread_id: str) -> AsyncGenerator[tuple[str, dict], None]:
+async def _stream_graph(input_state: dict, thread_id: str) -> AsyncGenerator[tuple[str, dict], None]:
     """流式调用 agent，逐个节点 yield (node_name, state_diff)。"""
     config = {"configurable": {"thread_id": thread_id}}
-    async for chunk in get_graph().astream(input_state, config=config, stream_mode="updates"):
+    async for chunk in get_graph().astream(fresh_input(input_state), config=config, stream_mode="updates"):
         for node, diff in (chunk or {}).items():
             if isinstance(diff, dict):
                 yield node, diff
@@ -40,3 +47,12 @@ async def stream_agent(input_state: dict, thread_id: str) -> AsyncGenerator[tupl
 
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def run_agent(input_state: dict, thread_id: str) -> dict:
+    from .agent import StoryClaw
+    return await StoryClaw(None).legacy_run(input_state,thread_id)
+
+async def stream_agent(input_state: dict, thread_id: str):
+    from .agent import StoryClaw
+    async for event in StoryClaw(None).legacy_stream(input_state,thread_id):yield event

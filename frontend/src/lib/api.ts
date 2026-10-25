@@ -229,7 +229,7 @@ import type {
   AssistOut, BrainstormInput, TitleGenInput, SceneEnhanceInput,
   DialoguePolishInput, ReadingConfigGenInput,
   Post, PostInput, PostList, SearchResult, ReadBook, ReadChapter, ReadChapterDetail,
-  AdminUser, CreditsReport, MembershipConfig, Membership, PurchaseResult,
+  MembershipConfig, Membership, PurchaseResult,
   RechargeHistory, FriendRequest, Friend, SocialMessageData, SendMessageInput,
   ChatMessage, ChatSession, ChapterGenerateResponse,
 } from '../types'
@@ -393,35 +393,6 @@ export async function listChaptersForRead(bid: number): Promise<ReadChapter[]> {
 export async function getChapterForRead(bid: number, cid: number): Promise<ReadChapterDetail> {
   const { data } = await api.get(`/community/books/${bid}/read/chapters/${cid}`)
   return data
-}
-
-// ===== P2-10 后台管理 =====
-export async function listAdminUsers(): Promise<AdminUser[]> {
-  const { data } = await api.get('/admin/users')
-  return data
-}
-
-export async function getCreditsReport(): Promise<CreditsReport> {
-  const { data } = await api.get('/admin/credits-report')
-  return data
-}
-
-export async function getAdminPricing(): Promise<Record<string, unknown>> {
-  const { data } = await api.get('/admin/pricing')
-  return data
-}
-
-export async function updateAdminPricing(body: Record<string, unknown>): Promise<void> {
-  await api.put('/admin/pricing', body)
-}
-
-export async function getAdminMembership(): Promise<Record<string, unknown>> {
-  const { data } = await api.get('/admin/membership')
-  return data
-}
-
-export async function updateAdminMembership(body: Record<string, unknown>): Promise<void> {
-  await api.put('/admin/membership', body)
 }
 
 // ===== P2-10 充值 =====
