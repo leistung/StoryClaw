@@ -3,5 +3,11 @@
   "version": 1,
   "description": "故事摘要与事实提炼",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "book.analyze"
+  ],
+  "reference_files": [
+    "references/evidence.md"
+  ]
 }

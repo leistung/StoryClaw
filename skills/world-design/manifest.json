@@ -3,5 +3,11 @@
   "version": 1,
   "description": "世界规则设计",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "setting.draft"
+  ],
+  "reference_files": [
+    "references/rules.md"
+  ]
 }

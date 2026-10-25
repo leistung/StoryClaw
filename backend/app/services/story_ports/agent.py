@@ -16,6 +16,9 @@ class BackendStoryPorts:
 
     async def emit(self,kind,payload):
         await agent_runs.append(self.rid,self.uid,kind,payload)
+        from storyclaw.deps import get_stream_sink
+        sink=get_stream_sink()
+        if sink is not None:await sink(kind,payload)
 
     async def execute(self,name,arguments):
         cap=get_capability(name);scope=self.request.scope
@@ -26,6 +29,8 @@ class BackendStoryPorts:
             if not scope.book_id:raise ValueError('请先打开一本作品，再使用此能力；首页选题请使用开书讨论。')
             book=await db.get(Book,scope.book_id)
             chapter=await db.get(Chapter,scope.chapter_id) if scope.chapter_id else None
+            if name=='author.ask':
+                return CapabilityResult(content='请集中补充：\n'+'\n'.join(q['question']+'：'+' / '.join(q['options']) for q in arguments['questions']),data={'artifact':True,'kind':'author.question','questions':arguments['questions']})
             if name=='project.status':
                 from ..serial import blueprint_state
                 from storyclaw.workflow import is_confirmed
@@ -37,23 +42,71 @@ class BackendStoryPorts:
                     'recent_chapters':[{'id':c.id,'number':c.number,'words':c.word_count,'rag_status':c.rag_status} for c in recent]}
                 if chapter:data['blueprint']=await blueprint_state(db,chapter)
                 return CapabilityResult(content='作品状态已读取',data=data)
+            if name in ('library.status','library.search','plans.status','release.status'):
+                from ...models.studio import StorySource,ProjectBaseline,StudioTask,ReleaseRecord
+                from ..library import coverage,reference_context
+                if name=='library.search':
+                    from ..metering import usage_scope
+                    async with usage_scope(self.uid):data=await reference_context(db,self.uid,book.id,arguments['query'])
+                    return CapabilityResult(content='来源证据（不代表读完全书）',data=data)
+                if name=='library.status':
+                    sources=list(await db.scalars(select(StorySource).where(StorySource.book_id==book.id,StorySource.user_id==self.uid)))
+                    baseline=await db.get(ProjectBaseline,book.id)
+                    data={'sources':[await coverage(db,r) for r in sources],'baseline':{k:getattr(baseline,k) for k in ('mode','status','cutoff','version','notes','overrides')} if baseline else None}
+                elif name=='plans.status':
+                    from ..studio_tasks import task_out
+                    data={'plans':[task_out(r) for r in await db.scalars(select(StudioTask).where(StudioTask.book_id==book.id).order_by(StudioTask.created_at.desc()).limit(10))]}
+                else:
+                    data={'releases':[{'id':r.id,'platform':r.platform,'status':r.status,'receipt':r.receipt} for r in await db.scalars(select(ReleaseRecord).where(ReleaseRecord.book_id==book.id).limit(10))]}
+                return CapabilityResult(content='已读取本作品真实记录',data=data)
             if name=='material.read':
                 outline=await db.scalar(select(Outline).where(Outline.book_id==book.id))
                 return CapabilityResult(content='当前范围资料',data={'book':{'title':book.title,'intro':(book.intro or '')[:3000]},
                     'outline':json.loads(outline.content) if outline and outline.content else {},
                     'chapter_text':(chapter.content or '')[:16000] if chapter else '',
                     'content_hash':chapter_hash(chapter) if chapter else None})
+            if name=='character.knowledge':
+                from ..narrative_state import view
+                from sqlalchemy import func
+                before=chapter.number if chapter else (await db.scalar(select(func.max(Chapter.number)).where(Chapter.book_id==book.id)) or 0)+1
+                return CapabilityResult(content='人物知情与证据状态（只到本章之前）',data=await view(db,book.id,before,arguments['persona']))
             if name=='memory.search':
                 from ..agent_tools import execute_writer_tool
-                result=await execute_writer_tool('query_memory',{'query':arguments['query']},self.uid,book.id,scope.chapter_id)
+                from ..metering import usage_scope
+                async with usage_scope(self.uid):result=await execute_writer_tool('query_memory',{'query':arguments['query']},self.uid,book.id,scope.chapter_id)
                 return CapabilityResult(content=result)
+            if name in ('idea.brainstorm','title.suggest','text.polish','text.continue','text.scene_enhance','text.dialogue_polish'):
+                from .. import writing_workflow as writing
+                from ...schemas import BrainstormIn,TitleGenIn,PolishIn,ContinueIn,SceneEnhanceIn,DialoguePolishIn
+                from storyclaw.continuity import prose
+                user=await db.get(User,self.uid)
+                if user.credits_balance<1:raise HTTPException(402,'积分不足')
+                text=arguments.get('selected_text','')
+                if name.startswith('text.'):
+                    if not chapter:raise ValueError('请先选择当前章节')
+                    if text and text not in prose(chapter.content):raise ValueError('指定片段不在当前正文，请重新选择，不会整章替换')
+                instruction=arguments['instruction']
+                if name=='idea.brainstorm':
+                    result=await writing.assist_brainstorm(BrainstormIn(topic=instruction+'\n作品约定：'+(book.intro or '')[:2000],genre=book.genre),user,db)
+                elif name=='title.suggest':
+                    result=await writing.assist_title_generation(TitleGenIn(content=prose(chapter.content)[:6000] if chapter else (book.intro or ''),keywords=[instruction],target='chapter' if chapter else 'book'),user,db)
+                elif name=='text.polish':result=await writing.polish_chapter(chapter.id,PolishIn(selected_text=text,polish_goal=instruction),user,db)
+                elif name=='text.continue':result=await writing.continue_writing(chapter.id,ContinueIn(prefix_text=prose(chapter.content)[-1500:]),user,db)
+                elif name=='text.scene_enhance':result=await writing.assist_scene_enhance(SceneEnhanceIn(scene_text=text,mood=instruction),user,db)
+                else:result=await writing.assist_dialogue_polish(DialoguePolishIn(dialogue_text=text,goal=instruction),user,db)
+                await db.execute(update(AgentRun).where(AgentRun.id==self.rid).values(credits_cost=AgentRun.credits_cost+result.credits_cost))
+                await db.commit()
+                return CapabilityResult(content=result.content,data={'artifact':True,'kind':name,'adopted':False,
+                    'selected_text':text,'chapter_id':scope.chapter_id,'base_hash':chapter_hash(chapter) if chapter else None,'credits_cost':result.credits_cost})
             if not cap.job_kind:raise ValueError('此能力尚未实现')
             if cap.job_kind not in ('outline','story-design','analysis') and not chapter:raise ValueError('请先选择要处理的章节')
             # Chat can propose a paid operation; existing manuscript/ingest always needs a real decision.
             needs_confirmation=(name=='knowledge.ingest' and self.request.entry=='chat') or (
-                name=='chapter.write' and chapter and bool(chapter.content) and self.request.entry=='chat')
+                name in ('chapter.write','chapter.revise') and chapter and bool(chapter.content) and self.request.entry=='chat')
             if needs_confirmation:
+                if name=='knowledge.ingest':arguments={**arguments,'reviewed_hash':chapter_hash(chapter)}
                 decision={'id':str(uuid4()),'command':name,'payload':arguments,'content_hash':chapter_hash(chapter),
+                    'book_title':book.title,'chapter_title':chapter.title,'chapter_number':chapter.number,
                     'summary':'确认审阅当前正文并建立知识索引' if name=='knowledge.ingest' else '生成将替换本章正文，旧稿保留在版本历史'}
                 return CapabilityResult(status='waiting_author',content=decision['summary'],data={'decision':decision})
             from ..work_commands import JobInput,create_job
@@ -71,53 +124,37 @@ class BackendStoryPorts:
 
     async def model_turn(self,messages,tools):
         from ..llm import build_llm_from_choice
-        from ..pricing import compute_cost
-        from ..credits import debit
-        from langchain_core.messages import SystemMessage,HumanMessage,AIMessage
-        llm,model=await build_llm_from_choice({'kind':'business'})
-        # Byte count bounds ordinary text tokenization conservatively; include tool wrappers.
-        bound=len(json.dumps([messages,tools],ensure_ascii=False).encode())+2048
-        reserve=compute_cost(model,bound,1024)
-        async with AsyncSessionLocal() as db:
-            run=await db.scalar(select(AgentRun).where(AgentRun.id==self.rid).with_for_update())
-            if run.status!='running':raise HTTPException(409,'请求不再执行')
-            if run.credits_cost+reserve>100:raise HTTPException(402,'本轮积分预算上限为100，请缩小目标后重试')
-            user=await db.get(User,self.uid);await debit(db,user,reserve);run.reserved=reserve;await db.commit()
-        usage={};response=None
+        from ..metering import usage_scope
+        from storyclaw.metering import MeteredModel
+        from storyclaw.orchestration.model import generate_lead_turn
+        client,model=await build_llm_from_choice({'kind':'business'})
+        usage={};meter=None
         try:
-            types={'system':SystemMessage,'user':HumanMessage,'assistant':AIMessage}
-            msgs=[types[m['role']](content=str(m['content'])[:20000]) for m in messages]
-            client=llm.bind_tools(tools).bind(max_tokens=1024)
-            buffer=''
-            async with asyncio.timeout(120):
-                async for chunk in client.astream(msgs):
-                    response=chunk if response is None else response+chunk
-                    # Do not expose partial tool JSON as prose.
-                    if isinstance(chunk.content,str) and chunk.content:
-                        buffer+=chunk.content
-                        if len(buffer)>=40:
-                            await self.emit('message.delta',{'text':buffer});buffer=''
-                if buffer:await self.emit('message.delta',{'text':buffer})
-            if response is None:raise ValueError('模型没有返回内容')
-            usage=response.usage_metadata or {}
-            if response.additional_kwargs.get('tool_calls') and not response.tool_calls:raise ValueError('模型工具调用格式不完整')
-            if getattr(response,'invalid_tool_calls',None):raise ValueError('模型工具调用格式不完整')
-            reason=(response.response_metadata or {}).get('finish_reason')
-            if reason in ('length','max_tokens'):raise ValueError('模型输出被截断，未执行不完整工具')
-            return ModelTurn(text=response.content if isinstance(response.content,str) else '',
-                calls=[ToolCall(name=c['name'],arguments=c.get('args') or {}) for c in response.tool_calls])
+            async with usage_scope(self.uid,run_id=self.rid) as meter:
+                async def delta(text):await self.emit('message.delta',{'text':text})
+                async def record_usage(data):usage.update(data)
+                return await generate_lead_turn(MeteredModel(client,model,meter),messages,tools,delta,record_usage)
         finally:
-            async with AsyncSessionLocal() as db:
-                run=await db.scalar(select(AgentRun).where(AgentRun.id==self.rid).with_for_update())
-                # Unknown supplier usage is explicitly recorded; no invented token count.
-                cost=compute_cost(model,int(usage.get('input_tokens',0)),int(usage.get('output_tokens',0))) if usage else 0
-                held=run.reserved
-                if cost>held:
-                    user=await db.get(User,self.uid);await debit(db,user,cost-held)
-                elif held>cost:
-                    await db.execute(update(User).where(User.id==self.uid).values(credits_balance=User.credits_balance+held-cost))
-                run.reserved=0;run.credits_cost+=cost
-                db.add(CreditsLedger(user_id=self.uid,delta=-cost,reason='agent-loop',model=model,
-                    in_tokens=int(usage.get('input_tokens',0)),out_tokens=int(usage.get('output_tokens',0))))
-                await agent_runs.event(db,run,'usage.updated',{'model':model,'credits_cost':cost,'usage_known':bool(usage)})
-                await db.commit()
+            if meter and meter.calls:
+                async with AsyncSessionLocal() as db:
+                    run=await db.scalar(select(AgentRun).where(AgentRun.id==self.rid).with_for_update())
+                    await agent_runs.event(db,run,'usage.updated',{'model':model,'credits_cost':meter.spent,'usage_known':bool(usage)})
+                    await db.commit()
+
+    async def lifecycle(self,action,run_id,data=None):
+        from ..agent_decisions import owned,decide,cancel
+        from types import SimpleNamespace
+        from ...models.agent import AgentEvent
+        async with AsyncSessionLocal() as db:
+            user=await db.get(User,self.uid)
+            if not user:raise HTTPException(401,'登录失效')
+            if action=='decision':return await decide(run_id,SimpleNamespace(**data),user,db)
+            if action=='cancel':return await cancel(run_id,user,db)
+            row=await owned(run_id,user,db)
+            if action=='status':return agent_runs.out(row)
+            if action=='events':
+                after=int((data or {}).get('after_seq',0))
+                if after<0:raise HTTPException(422,'事件位置无效')
+                rows=await db.scalars(select(AgentEvent).where(AgentEvent.run_id==run_id,AgentEvent.seq>after).order_by(AgentEvent.seq).limit(200))
+                return [{'id':e.id,'run_id':e.run_id,'seq':e.seq,'type':e.type,'payload':e.payload} for e in rows]
+            raise ValueError('未知运行操作')

@@ -3,5 +3,11 @@
   "version": 1,
   "description": "故事结构设计",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "framework.draft"
+  ],
+  "reference_files": [
+    "references/serial.md"
+  ]
 }

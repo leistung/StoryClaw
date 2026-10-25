@@ -25,8 +25,10 @@ class MemoryVectorStore:
         if key in self._chunks:
             self._chunks[key] = [c for c in self._chunks[key] if c["chapter_id"] != chapter_id]
 
-    def search(self, user_id: int, book_id: int, query_vec: list[float], top_k: int) -> list[dict]:
+    def search(self, user_id: int, book_id: int, query_vec: list[float], top_k: int, allowed_chapter_ids: list[int] | None = None) -> list[dict]:
         rows = self._chunks.get((user_id, book_id), [])
+        if allowed_chapter_ids is not None:
+            allowed=set(allowed_chapter_ids);rows=[c for c in rows if c["chapter_id"] in allowed]
         scored = [(cosine_similarity(query_vec, c.get("embedding") or []), c) for c in rows]
         scored.sort(key=lambda x: x[0], reverse=True)
         return [
@@ -64,13 +66,14 @@ class MemoryVectorStore:
         for r in relations:
             g["relations"].append({**r, "chapter_id": chapter_id})
 
-    def query_related(self, user_id: int, book_id: int, query_text: str, limit: int = 8) -> dict:
+    def query_related(self, user_id: int, book_id: int, query_text: str, limit: int = 8, allowed_chapter_ids: list[int] | None = None) -> dict:
         g = self._graphs.get((user_id, book_id), {"entities": [], "relations": []})
-        ents = [e for e in g["entities"]
-                if query_text in (e.get("name") or "") or query_text in (e.get("description") or "")]
+        allowed=set(allowed_chapter_ids) if allowed_chapter_ids is not None else None
+        ents = [e for e in g["entities"] if (allowed is None or e.get("chapter_id") in allowed)
+                and (query_text in (e.get("name") or "") or query_text in (e.get("description") or ""))]
         ents = ents[:limit]
         names = {e.get("name") for e in ents}
-        rels = [r for r in g["relations"] if r.get("from") in names or r.get("to") in names]
+        rels = [r for r in g["relations"] if (r.get("from") in names or r.get("to") in names) and (allowed is None or r.get("chapter_id") in allowed)]
         return {"entities": ents, "relations": rels[:50]}
 
     def book_graph(self, user_id: int, book_id: int) -> dict:

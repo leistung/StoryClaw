@@ -17,21 +17,12 @@ from .. import prompts
 from .._util import strip_code_fence
 from ..llm import get_llm
 from ..outline import plan_outline
-from ..skills import read_skill_sections
+from ..skills import read_skill_sections, method_instructions
 from ..state import AgentState
 
 
 def _skill_instructions(skill_name: str) -> str:
-    """把 SKILL.md 的 Workflow / Constraints / Output 注入 system prompt。"""
-    sections = read_skill_sections(skill_name)
-    if not sections:
-        return ""
-    lines = [f"<skill:{skill_name}>"]
-    for key, content in sections.items():
-        if content:
-            lines.append(f"[{key}]\n{content}")
-    lines.append("</skill>")
-    return "\n\n".join(lines)
+    return method_instructions(skill_name)
 
 
 async def analyst(state: AgentState) -> dict:

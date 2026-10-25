@@ -81,7 +81,7 @@ class Neo4jStore:
                     if not name:
                         continue
                     s.run(
-                        "MERGE (e:StoryEntity {user_id:$user_id, book_id:$book_id, name:$name}) "
+                        "MERGE (e:StoryEntity {user_id:$user_id, book_id:$book_id, chapter_id:$chapter_id, name:$name}) "
                         "ON CREATE SET e.entity_type=$etype, e.description=$desc "
                         "ON MATCH SET e.entity_type=$etype, e.description=$desc "
                         "MERGE (c:Chapter {book_id:$book_id, chapter_id:$chapter_id}) "
@@ -99,8 +99,8 @@ class Neo4jStore:
                         continue
                     s.run(
                         # from/to 是 Cypher 保留字，参数名用 from_name/to_name
-                        "MATCH (a:StoryEntity {user_id:$user_id, book_id:$book_id, name:$from_name}) "
-                        "MATCH (b:StoryEntity {user_id:$user_id, book_id:$book_id, name:$to_name}) "
+                        "MATCH (a:StoryEntity {user_id:$user_id, book_id:$book_id, chapter_id:$chapter_id, name:$from_name}) "
+                        "MATCH (b:StoryEntity {user_id:$user_id, book_id:$book_id, chapter_id:$chapter_id, name:$to_name}) "
                         "MERGE (a)-[:REL {type:$rtype, chapter_id:$chapter_id}]->(b)",
                         user_id=user_id, book_id=book_id,
                         from_name=frm, to_name=to, rtype=rtype, chapter_id=chapter_id,
@@ -109,10 +109,10 @@ class Neo4jStore:
                 return ent_count, rel_count
         except Exception as e:
             log.warning("Neo4j upsert 失败: %s", e)
-            return 0, 0
+            raise RuntimeError("Neo4j 写入失败，索引不可激活") from e
 
     # ---------- 查询 ----------
-    def query_related(self, user_id: int, book_id: int, query_text: str, limit: int = 8) -> dict:
+    def query_related(self, user_id: int, book_id: int, query_text: str, limit: int = 8, allowed_chapter_ids: list[int] | None = None) -> dict:
         """匹配实体 + 一跳关系。"""
         if not self.connect():
             raise RuntimeError('Neo4j 不可用')
@@ -121,10 +121,11 @@ class Neo4jStore:
                 rows = s.run(
                     "MATCH (e:StoryEntity {user_id:$user_id, book_id:$book_id}) "
                     "WHERE e.name CONTAINS $q OR (size(e.name) >= 2 AND $q CONTAINS e.name) OR e.description CONTAINS $q "
-                    "OPTIONAL MATCH (e)-[ap:APPEARS_IN]->(c:Chapter) "
+                    "MATCH (e)-[ap:APPEARS_IN]->(c:Chapter) "
+                    "WHERE $allowed IS NULL OR c.chapter_id IN $allowed "
                     "RETURN e.name AS name, e.entity_type AS type, e.description AS description, "
                     "c.chapter_id AS chapter_id LIMIT $limit",
-                    user_id=user_id, book_id=book_id, q=query_text, limit=limit,
+                    user_id=user_id, book_id=book_id, q=query_text, limit=limit, allowed=allowed_chapter_ids,
                 ).data()
                 entities = []
                 for r in rows:
@@ -139,10 +140,11 @@ class Neo4jStore:
                     rels = s.run(
                         "MATCH (a:StoryEntity {user_id:$user_id, book_id:$book_id})-[r:REL]->"
                         "(b:StoryEntity {user_id:$user_id, book_id:$book_id}) "
-                        "WHERE a.name IN $names OR b.name IN $names "
+                        "WHERE (a.name IN $names OR b.name IN $names) "
+                        "AND ($allowed IS NULL OR r.chapter_id IN $allowed) "
                         "RETURN a.name AS frm, r.type AS type, b.name AS to, r.chapter_id AS chapter_id "
                         "LIMIT 50",
-                        user_id=user_id, book_id=book_id, names=names,
+                        user_id=user_id, book_id=book_id, names=names, allowed=allowed_chapter_ids,
                     ).data()
                     relations = [
                         {"from": r["frm"], "to": r["to"], "type": r["type"],
@@ -244,3 +246,10 @@ class Neo4jStore:
                 return int(rec["n"]) if rec and rec["n"] is not None else 0
         except Exception:
             return 0
+
+    def delete_chapter_strict(self,user_id,book_id,chapter_id):
+        if not self.connect():raise RuntimeError('Neo4j unavailable for cleanup')
+        with self._driver.session() as session,session.begin_transaction() as tx:
+            tx.run('MATCH (:StoryEntity {user_id:$uid,book_id:$bid})-[r:REL {chapter_id:$cid}]->() DELETE r',uid=user_id,bid=book_id,cid=chapter_id).consume()
+            tx.run('MATCH (c:Chapter {book_id:$bid,chapter_id:$cid}) DETACH DELETE c',bid=book_id,cid=chapter_id).consume()
+            tx.run('MATCH (e:StoryEntity {user_id:$uid,book_id:$bid,chapter_id:$cid}) DETACH DELETE e',uid=user_id,bid=book_id,cid=chapter_id).consume()

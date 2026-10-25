@@ -29,11 +29,11 @@ async def get_llm(model_choice: dict | None = None):
     """返回 (chat_model, model_id)。"""
     mc = model_choice or {}
     deps = get_deps()
-    if deps.llm_factory is not None:
-        return await deps.llm_factory(mc)
-    if _LLM_FACTORY is not None:
-        return await _LLM_FACTORY(mc)
-    return _build_env_default(mc)
+    if deps.llm_factory is not None:client,model=await deps.llm_factory(mc)
+    elif _LLM_FACTORY is not None:client,model=await _LLM_FACTORY(mc)
+    else:client,model=_build_env_default(mc)
+    from .metering import wrap_model
+    return wrap_model(client,model),model
 
 
 def build_chat_client(
@@ -58,7 +58,7 @@ def build_chat_client(
         from langchain_anthropic import ChatAnthropic
         kw: dict = {
             "model": model, "api_key": api_key or "x",
-            "temperature": temperature, "max_tokens": max_tokens,
+            "temperature": temperature, "max_tokens": max_tokens, "max_retries": 0,
         }
         if base_url:
             kw["anthropic_api_url"] = base_url
@@ -69,7 +69,7 @@ def build_chat_client(
     from langchain_openai import ChatOpenAI
     kw = {
         "model": model, "api_key": api_key or "dummy",
-        "temperature": temperature, "max_tokens": max_tokens,
+        "temperature": temperature, "max_tokens": max_tokens, "max_retries": 0,
     }
     if base_url:
         kw["base_url"] = base_url
@@ -100,7 +100,7 @@ def _build_responses(model: str, api_key: str, base_url: str, temperature: float
     from langchain_openai import ChatOpenAI
     kw = {
         "model": model, "api_key": api_key or "dummy",
-        "temperature": temperature, "max_tokens": max_tokens,
+        "temperature": temperature, "max_tokens": max_tokens, "max_retries": 0,
     }
     if base_url:
         kw["base_url"] = base_url

@@ -1,3 +1,4 @@
+import StudioManager from '@/components/StudioManager'
 import StoryAssistant from '@/components/StoryAssistant'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -13,9 +14,9 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import api, { extractError, streamChat, streamChapterGenerate, listChatSessions, getChatMessages, polishChapter, continueWriting, analyzeBook } from '@/lib/api'
+import api, { extractError, polishChapter, continueWriting } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
-import type { Book, Chapter, ChapterDetail, Volume, ChatMessage, ChatResponse, ChatSession, ChapterGenerateResponse, AnalyzeSkill, LLMConfig } from '@/types'
+import type { Book, Chapter, ChapterDetail, Volume, LLMConfig } from '@/types'
 import {
   X, Plus, Save, Home as HomeIcon, Bold, Italic, Heading1, Heading2,
   Highlighter, List, Send, RotateCcw, PenLine, Wand2, CornerDownRight, Sparkles, History, Feather, Focus, PanelLeft, Download, ChevronRight, BookOpen, Users, MapPin, Package, GitBranch, FileText, Network, Settings, Library,
@@ -26,13 +27,12 @@ import ConfigPage from '@/components/ConfigPage'
 import ReaderPage from '@/components/ReaderPage'
 import BookInfoPage from '@/components/BookInfoPage'
 import WorkspaceSettings from '@/components/WorkspaceSettings'
-import type { KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
-const TABS = ['创作', '大纲', '世界观', '角色', '场景', '物品', '情节', '数据库', '任务', '阅读', '书籍信息', '设置'] as const
-const ENABLED_TABS: ReadonlySet<string> = new Set(['创作', '阅读', '世界观', '角色', '场景', '物品', '情节', '大纲', '数据库', '书籍信息', '设置', '任务'])
+const TABS = ['创作', '大纲', '世界观', '角色', '场景', '物品', '情节', '数据库', '任务', '阅读', '书籍信息', '创作管理', '设置'] as const
+const ENABLED_TABS: ReadonlySet<string> = new Set(['创作', '阅读', '世界观', '角色', '场景', '物品', '情节', '大纲', '数据库', '书籍信息', '创作管理', '设置', '任务', '创作管理'])
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -208,110 +208,8 @@ export default function Workspace() {
     }
   }, [chapters, selectedChapterId])
 
-  // ===== Ask 面板 =====
-  const [askMessages, setAskMessages] = useState<ChatMessage[]>([])
-  const [askInput, setAskInput] = useState('')
-  const [threadId, setThreadId] = useState('')
-  const [askSending, setAskSending] = useState(false)
-
-  // ===== Ask 历史记录 =====
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [historyLoading, setHistoryLoading] = useState(false)
-
-  const refreshSessions = async () => {
-    try {
-      const list = await listChatSessions()
-      setSessions(list)
-    } catch { /* 静默失败，历史面板仍可用 */ }
-  }
-
-  useEffect(() => {
-    if (historyOpen) {
-      setHistoryLoading(true)
-      void refreshSessions().finally(() => setHistoryLoading(false))
-    }
-  }, [historyOpen])
-
-  const toggleHistory = () => {
-    setHistoryOpen((v) => {
-      const next = !v
-      if (next) void refreshSessions()
-      return next
-    })
-  }
-
-  const loadSession = async (thread_id: string) => {
-    if (historyLoading) return
-    setHistoryLoading(true)
-    try {
-      const msgs = await getChatMessages(thread_id)
-      setAskMessages(msgs)
-      setThreadId(thread_id)
-    } catch (e) {
-      setError(extractError(e, '加载历史失败'))
-    } finally {
-      setHistoryLoading(false)
-    }
-  }
-
-  const fmtTime = (iso?: string | null) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    const now = new Date()
-    const sameDay = d.toDateString() === now.toDateString()
-    return sameDay
-      ? d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-  }
-
-  const sendAsk = async () => {
-    const text = askInput.trim()
-    if (!text || askSending) return
-    if (!requireLlm()) return
-    setAskSending(true)
-    setAskInput('')
-    const tempId = `temp-${Date.now()}`
-    const assistantId = `temp-a-${Date.now()}`
-    setAskMessages((prev) => [
-      ...prev,
-      { id: tempId, role: 'user', content: text },
-      { id: assistantId, role: 'assistant', content: '' },
-    ])
-    await streamChat(
-      { message: text, thread_id: threadId || undefined },
-      {
-        onStart: (d) => { if (d.thread_id) setThreadId(d.thread_id) },
-        onState: (s) => {
-          if (typeof s.content === 'string') {
-            setAskMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: s.content as string } : m,
-              ),
-            )
-          }
-        },
-        onDone: (d) => {
-          const done = d as unknown as ChatResponse
-          setAskMessages((prev) => [
-            ...prev.filter((m) => m.id !== tempId && m.id !== assistantId),
-            { id: tempId, role: 'user', content: text },
-            {
-              id: String(done.message_id), role: 'assistant', content: done.content,
-              model: done.model, in_tokens: done.in_tokens, out_tokens: done.out_tokens,
-              credits_cost: done.credits_cost,
-            },
-          ])
-          if (isBusiness) void fetchMe()
-        },
-        onError: (msg) => {
-          setError(msg || '发送失败')
-          setAskMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== assistantId))
-        },
-      },
-    )
-    setAskSending(false)
-  }
+  // Legacy local-edit endpoints keep their own conversation; assistant runs are separate.
+  const [threadId,setThreadId] = useState('')
 
   // ===== 写本章：调用 write-chapter skill =====
   const [generating, setGenerating] = useState(false)
@@ -335,7 +233,7 @@ export default function Workspace() {
     for(const j of workJobs){
       if(j.status!=='succeeded' || finishedJobs.current.has(j.id))continue
       finishedJobs.current.add(j.id)
-      if(j.chapter_id===selectedChapterId && j.kind==='generate'){
+      if(j.chapter_id===selectedChapterId && ['generate','revise'].includes(j.kind)){
         lastSavedId.current=null
         void qc.invalidateQueries({queryKey:['chapter',selectedChapterId]})
       }
@@ -348,14 +246,9 @@ export default function Workspace() {
     }
   },[workJobs,selectedChapterId,bid,qc,fetchMe])
 
-  const onAskKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendAsk() }
-  }
-
   // ===== P1-6：润色选中 / 段内续写 / 分析 skill =====
   const [polishing, setPolishing] = useState(false)
   const [continuing, setContinuing] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
 
   /** 取编辑器选中的纯文本（无 HTML 标签） */
   const getSelectedText = (): string => {
@@ -452,21 +345,6 @@ export default function Workspace() {
     }
   }
 
-  /** 触发分析 skill，结果回填到 Ask 面板 */
-  const runAnalyze = async (skill: AnalyzeSkill) => {
-    if(!bid || analyzing)return
-    if(skill==='plot-planning'&&!outlineReady){setActiveTab('大纲');toast.info('请先保存并确认大纲，再规划情节');return}
-    if(skill==='outline-planning'){setActiveTab('大纲');return}
-    setAnalyzing(true)
-    try{
-      await enqueueJob({book_id:bid,kind:'analysis',skill,start:1,end:Math.max(1,...(chapters ?? []).map(c=>c.number))})
-      void qc.invalidateQueries({queryKey:['jobs',bid]})
-      toast.success('分析已排队，请在任务中心查看报告')
-      setActiveTab('任务')
-    }catch(e){toast.error(extractError(e,'创建分析任务失败'))}
-    finally{setAnalyzing(false)}
-  }
-
   if (!bid) return <div className="p-8 text-muted-foreground">无效书籍</div>
 
   const chaptersByVol = (volId: number | null) => chapters?.filter((c) => c.volume_id === volId) ?? []
@@ -492,11 +370,11 @@ export default function Workspace() {
           const enabled = ENABLED_TABS.has(t)
           return (
             <button key={t} onClick={() => enabled ? setActiveTab(t) : undefined}
-              disabled={!enabled} aria-current={activeTab===t?'page':undefined} title={({'创作':'编辑、生成与修订章节','大纲':'规划分卷、章节与摘要','世界观':'维护时代、社会与力量规则','角色':'维护人物与动机','场景':'管理地点与环境规则','物品':'记录重要道具','情节':'整理冲突与伏笔','数据库':'入库正文，检索历史记忆','任务':'查看后台进度与结果','阅读':'阅读当前作品','书籍信息':'作品资料和公开发布','设置':'调整创作参数'})[t]}
+              disabled={!enabled} aria-current={activeTab===t?'page':undefined} title={({'创作':'编辑、生成与修订章节','大纲':'规划分卷、章节与摘要','世界观':'维护时代、社会与力量规则','角色':'维护人物与动机','场景':'管理地点与环境规则','物品':'记录重要道具','情节':'整理冲突与伏笔','数据库':'入库正文，检索历史记忆','任务':'查看后台进度与结果','阅读':'阅读当前作品','书籍信息':'作品资料和公开发布','创作管理':'旧稿接管、连续计划与投稿准备','设置':'调整创作参数'})[t]}
               className={`px-3 h-full text-sm border-b-2 transition ${
                 activeTab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'
               } ${!enabled ? 'opacity-40 cursor-not-allowed' : 'hover:text-foreground'}`}>
-              {(() => { const Icon = ({'创作':PenLine,'阅读':BookOpen,'世界观':Library,'角色':Users,'场景':MapPin,'物品':Package,'情节':GitBranch,'大纲':FileText,'数据库':Network,'书籍信息':Library,'设置':Settings,'任务':History})[t]; return <Icon size={14}/> })()}{t==='数据库'?'故事记忆':t}
+              {(() => { const Icon = ({'创作':PenLine,'阅读':BookOpen,'世界观':Library,'角色':Users,'场景':MapPin,'物品':Package,'情节':GitBranch,'大纲':FileText,'数据库':Network,'书籍信息':Library,'设置':Settings,'任务':History,'创作管理':Library})[t]; return <Icon size={14}/> })()}{t==='数据库'?'故事记忆':t}
             </button>
           )
         })}
@@ -580,6 +458,8 @@ export default function Workspace() {
               <ConfigPage bid={bid} entityType="plot" />
             ) : activeTab === '书籍信息' ? (
               <BookInfoPage book={book} bid={bid} onSaved={() => qc.invalidateQueries({ queryKey: ['book', bid] })} />
+            ) : activeTab === '创作管理' ? (
+              <StudioManager bid={bid} chapterId={selectedChapterId} />
             ) : activeTab === '设置' ? (
               <WorkspaceSettings
                 autoSaveMs={autoSaveMs}

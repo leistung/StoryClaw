@@ -3,5 +3,13 @@
   "version": 1,
   "description": "局部编辑",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "text.polish",
+    "text.continue"
+  ],
+  "reference_files": [
+    "references/polish.md",
+    "references/continue.md"
+  ]
 }

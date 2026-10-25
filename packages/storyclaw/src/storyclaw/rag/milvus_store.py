@@ -108,7 +108,7 @@ class MilvusStore:
         except Exception as e:
             log.warning("Milvus delete 失败: %s", e)
 
-    def search(self, user_id: int, book_id: int, query_vec: list[float], top_k: int) -> list[dict]:
+    def search(self, user_id: int, book_id: int, query_vec: list[float], top_k: int, allowed_chapter_ids: list[int] | None = None) -> list[dict]:
         col = self._ensure_collection(user_id, book_id)
         if col is None:
             raise RuntimeError('Milvus 检索集合不可用')
@@ -118,6 +118,7 @@ class MilvusStore:
                 param={"metric_type": "COSINE", "params": {"nprobe": 16}},
                 limit=top_k,
                 output_fields=["chapter_id", "volume_id", "chunk_idx", "text"],
+                expr=("chapter_id in ["+",".join(str(int(x)) for x in allowed_chapter_ids)+"]") if allowed_chapter_ids is not None else None,
             )
             hits = res[0] if res else []
             out = []
@@ -149,3 +150,11 @@ class MilvusStore:
             return int(rows[0].get("count(*)", 0)) if rows else 0
         except Exception:
             return 0
+
+    def delete_chapter_strict(self,user_id,book_id,chapter_id):
+        if not self.connect():raise RuntimeError('Milvus unavailable for cleanup')
+        name=self._collection_name(user_id,book_id)
+        if not utility.has_collection(name):return
+        col=self._ensure_collection(user_id,book_id)
+        if col is None:raise RuntimeError('Milvus collection unavailable for cleanup')
+        col.delete(f'chapter_id == {int(chapter_id)}');col.flush()

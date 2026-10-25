@@ -127,8 +127,8 @@ async def tool_loop(state: dict[str, Any], sys_prompt: str, user_msg: str) -> st
         try:
             resp = await llm_tools.ainvoke(conv)
         except Exception as e:
-            log.warning("tool round failed: %s", e)
-            break
+            # An upstream failure is not evidence that context is sufficient.
+            raise
         tool_calls = getattr(resp, "tool_calls", None) or []
         if not tool_calls:
             break

@@ -3,5 +3,13 @@
   "version": 1,
   "description": "章节写作与修订",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "chapter.write",
+    "chapter.revise"
+  ],
+  "reference_files": [
+    "references/write.md",
+    "references/revise.md"
+  ]
 }

@@ -11,9 +11,10 @@ import json
 import logging
 
 from .. import prompts
+from ..errors import model_failure
 from .._util import ensure_paragraphs, llm_respond, stream_llm_respond, usage_payload
 from ..deps import get_deps, get_stream_sink
-from ..skills import describe_skill, read_skill_sections
+from ..skills import describe_skill, read_skill_sections, method_instructions
 from ..state import AgentState
 from .tools import tool_loop
 
@@ -50,17 +51,7 @@ async def _respond_aware(state: AgentState, sys_prompt: str, user_msg: str):
 
 
 def _skill_instructions(skill_name: str) -> str:
-    """把 SKILL.md 的 Workflow / Constraints / Output 注入 system prompt，
-    让 skill 文件真正驱动行为（DeerFlow 式 skill 加载）。"""
-    sections = read_skill_sections(skill_name)
-    if not sections:
-        return ""
-    lines = [f"<skill:{skill_name}>"]
-    for key, content in sections.items():
-        if content:
-            lines.append(f"[{key}]\n{content}")
-    lines.append("</skill>")
-    return "\n\n".join(lines)
+    return method_instructions(skill_name)
 
 
 async def writer(state: AgentState) -> dict:
@@ -117,6 +108,8 @@ async def _writer_write(state: AgentState) -> dict:
         user_prefs=json.dumps(state.get("user_memory") or {}, ensure_ascii=False),
     ) + "\n\n" + _skill_instructions("write-chapter")
     sys_prompt += "\n【作品简介与创作约定】\n" + ctx.get("book_brief", "") + "\n【本章场景任务单】\n" + json.dumps(ctx.get("scene_plan") or {},ensure_ascii=False)
+    if state.get("review_feedback") and state.get("draft_content"):
+        sys_prompt += "\n【待修订的完整候选：保留已写事件，仅修正审阅问题】\n"+state["draft_content"][:20000]
     if state.get("review_feedback"):
         sys_prompt += "\n【上轮审阅要求】" + state["review_feedback"] + "。返回完整正文，不要说明修改过程。"
     msgs = state.get("messages") or []
@@ -127,11 +120,11 @@ async def _writer_write(state: AgentState) -> dict:
         if tool_out:
             sys_prompt += "\n\n【工具查询结果】\n" + tool_out
     except Exception as e:
-        log.warning("tool_loop failed, fallback to direct write: %s", e)
+        return {"draft_content":state.get("draft_content", ""),"status":"error",**model_failure(e)}
     try:
         content, in_t, out_t, model_id = await _respond_aware(state, sys_prompt, user_msg)
     except Exception as e:
-        return {"draft_content": "", "error": f"Writer LLM 调用失败: {e}", "status": "error"}
+        return {"draft_content": state.get("draft_content", ""), "status": "error", **model_failure(e)}
     return {
         "draft_content": content, "active_skill": "write-chapter",
         "token_usage": _usage(state, model_id, in_t, out_t), "error": None,
@@ -153,7 +146,7 @@ async def _writer_modify(state: AgentState) -> dict:
     try:
         content, in_t, out_t, model_id = await _respond_aware(state, sys_prompt, f"请按要求修改本章：{modify_req}")
     except Exception as e:
-        return {"draft_content": "", "error": f"Modify LLM 调用失败: {e}", "status": "error"}
+        return {"draft_content": state.get("draft_content", ""), "status": "error", **model_failure(e)}
     return {
         "draft_content": content, "active_skill": "modify-chapter",
         "token_usage": _usage(state, model_id, in_t, out_t), "error": None,
@@ -178,7 +171,7 @@ async def _writer_continue(state: AgentState) -> dict:
     try:
         content, in_t, out_t, model_id = await _respond_aware({**state, "response_max_tokens": max(256, int(ctx.get("fragment_max_words", 600) * 1.6))}, sys_prompt, "请基于上文续写片段，写完一个短场景即停，不展开后续情节")
     except Exception as e:
-        return {"draft_content": "", "error": f"Continue LLM 调用失败: {e}", "status": "error"}
+        return {"draft_content": state.get("draft_content", ""), "status": "error", **model_failure(e)}
     return {
         "draft_content": content, "active_skill": "continue-writing",
         "token_usage": _usage(state, model_id, in_t, out_t), "error": None,
@@ -199,7 +192,7 @@ async def _writer_polish(state: AgentState) -> dict:
     try:
         content, in_t, out_t, model_id = await _respond_aware({**state, "response_max_tokens": min(8192, max(512, len(selected) * 2 + 256))}, sys_prompt, "请润色这段文字")
     except Exception as e:
-        return {"draft_content": "", "error": f"Polish LLM 调用失败: {e}", "status": "error"}
+        return {"draft_content": state.get("draft_content", ""), "status": "error", **model_failure(e)}
     return {
         "draft_content": content, "active_skill": "polish-chapter",
         "token_usage": _usage(state, model_id, in_t, out_t), "error": None,

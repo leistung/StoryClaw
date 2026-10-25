@@ -1,7 +1,8 @@
 """SQL/transaction adapters for rolling chapter planning and impact notices."""
 import json
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select,func
+from sqlalchemy.orm import load_only
 from storyclaw.serial import dependencies,digest,Blueprint,generate_blueprint
 from storyclaw.workflow import is_confirmed
 from ..models import Book,Chapter,ConfigEntity,Outline,CreditsLedger
@@ -19,9 +20,20 @@ async def inputs(db,chapter):
     row=await db.scalar(select(Outline).where(Outline.book_id==book.id).execution_options(populate_existing=True))
     framework=json.loads(row.content) if row else {}
     canon=list(await db.scalars(select(ConfigEntity).where(ConfigEntity.book_id==book.id,ConfigEntity.entity_type.in_(['character','world','scene','item','plot']),ConfigEntity.category!='chapter-plan').order_by(ConfigEntity.id).execution_options(populate_existing=True)))
-    history=list(await db.scalars(select(Chapter).where(Chapter.book_id==book.id,Chapter.number<chapter.number).order_by(Chapter.number).execution_options(populate_existing=True)))
+    history=list(await db.scalars(select(Chapter).options(load_only(Chapter.id,Chapter.number,Chapter.word_count,Chapter.rag_status)).where(Chapter.book_id==book.id,Chapter.number<chapter.number).order_by(Chapter.number).execution_options(populate_existing=True)))
     meta={k:getattr(book,k) for k in ('title','intro','genre','protagonist_name','protagonist_intro','per_chapter_words')}
-    stamp=dependencies(framework,[{'id':r.id,'name':r.name,'type':r.entity_type,'description':r.description,'extra':r.extra_json} for r in canon],[{'id':r.id,'number':r.number,'hash':chapter_hash(r)} for r in history],meta)
+    from ..models.studio import ProjectBaseline,PrivateMethod
+    methods=list(await db.scalars(select(PrivateMethod).where(PrivateMethod.user_id==book.user_id,PrivateMethod.enabled==True).order_by(PrivateMethod.id)))
+    meta['private_methods']=[digest([m.id,m.title,m.content]) for m in methods]
+    baseline=await db.get(ProjectBaseline,book.id)
+    if baseline:meta['source_baseline']={'version':baseline.version,'hash':baseline.confirmed_hash,'status':baseline.status}
+    from ..models.operations import NarrativePolicy,NarrativeFocus
+    policy=await db.get(NarrativePolicy,book.id);focus=await db.get(NarrativeFocus,chapter.id)
+    meta['narrative_policy_version']=policy.version if policy else 0
+    meta['viewpoint']=focus.persona if focus else ''
+    from .history_prefix import history_digest
+    root=await history_digest(db,book.id,chapter.number-1)
+    stamp=dependencies(framework,[{'id':r.id,'name':r.name,'type':r.entity_type,'description':r.description,'extra':r.extra_json} for r in canon],[{'prefix_upto':chapter.number-1,'root':root}],meta)
     return framework,meta,history,stamp
 
 async def record(db,chapter):

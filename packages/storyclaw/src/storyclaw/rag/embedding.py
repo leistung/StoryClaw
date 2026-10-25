@@ -84,11 +84,22 @@ async def embed_texts(texts: list[str], cfg: dict | None = None) -> list[list[fl
             payload = {"model": c["model"], "input": batch, "encoding_format": "float"}
             if c.get("dimensions") is not None:
                 payload["dimensions"] = c["dimensions"]
-            resp = await client.post(
-                f"{c['base_url']}/embeddings",
-                headers={"Authorization": f"Bearer {c['api_key']}", "Content-Type": "application/json"},
-                json=payload,
-            )
+            from ..metering import active_meter
+            meter=active_meter.get();call=None;data={};complete=False
+            if meter:
+                call=await meter.reserve('embedding:'+c['model'],sum(len(t.encode()) for t in batch),0);meter.call_ids.append(call)
+            try:
+                resp = await client.post(
+                    f"{c['base_url']}/embeddings",
+                    headers={"Authorization": f"Bearer {c['api_key']}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if resp.status_code==200:data=resp.json();complete=True
+            finally:
+                if meter and call:
+                    tokens=(data.get('usage') or {}).get('total_tokens')
+                    usage={'input_tokens':tokens,'output_tokens':0} if tokens is not None else {}
+                    meter.spent+=await meter.settle(call,usage,complete);meter.calls+=1
             if resp.status_code != 200:
                 raise ValueError(f"Embedding API 调用失败 {resp.status_code}: {resp.text[:300]}")
             data = resp.json()

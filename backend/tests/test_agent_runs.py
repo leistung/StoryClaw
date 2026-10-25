@@ -29,7 +29,7 @@ class AgentRunsTests(unittest.IsolatedAsyncioTestCase):
    async def call(method,path,data=None,status=200,headers=None):
     r=await client.request(method,'/api/v1'+path,json=data,headers=headers or h)
     self.assertEqual(r.status_code,status,r.text);return r.json()
-   book=await call('POST','/books',{'title':'Agent集成测试','intro':'私密的测试资料'})
+   book=await call('POST','/books',{'title':'Agent集成测试','genre':'玄幻','intro':'私密的测试资料'})
    bid=book['id'];chapter=await call('POST',f'/chapters/books/{bid}',{'title':'第一章'})
    await call('PUT',f'/chapters/{chapter["id"]}',{'content':'夜雨落在窗前，灯匠收好了铜钳。'})
    # Commands are synchronous deterministic enqueue, and use the legacy queue/policies.
@@ -65,3 +65,13 @@ class AgentRunsTests(unittest.IsolatedAsyncioTestCase):
    await call('POST',f'/agent/runs/{pending["id"]}/cancel')
    with patch('app.services.story_ports.agent.BackendStoryPorts.model_turn',model):
     self.assertFalse(await poll_once())
+
+   # A cancelled, crashed run cannot retain a reservation forever or refund it twice.
+   from datetime import datetime,timedelta,timezone
+   async with database.AsyncSessionLocal() as db:
+    row=await db.get(AgentRun,pending['id']);row.reserved=7;row.lease_until=datetime.now(timezone.utc)-timedelta(seconds=1)
+    user=await db.get(User,uid);before=user.credits_balance;user.credits_balance-=7;await db.commit()
+   await poll_once();await poll_once()
+   async with database.AsyncSessionLocal() as db:
+    self.assertEqual((await db.get(User,uid)).credits_balance,before)
+    self.assertEqual((await db.get(AgentRun,pending['id'])).status,'cancelled')

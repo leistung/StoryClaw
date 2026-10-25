@@ -1,5 +1,7 @@
 # StoryClaw 项目目录说明
 
+> 后续重构已移动聊天/写作/大纲/知识业务到 services/*_workflow.py，并新增 agent.py、contracts、能力目录和 Run API。本文早期文件职责请结合 [当前重构记录](AGENT-REFACTOR-STATUS.md) 阅读。
+
 按 2026-10-25 当前源码核对。描述的是实际职责，不把规划当成已经实现。下列相对链接以 docs/ 为基准。`.env` 的值、密钥、依赖安装目录、缓存、测试运行输出不逐项展开。
 
 ## 项目整体结构
@@ -298,3 +300,38 @@ api/ideation.py → storyclaw/ideation/session.py → workflow.py / engine.py。
 - researcher 不是联网爬虫；reviewer 不是完整文学质量裁判；向量库也不能保证全文每个事实都被召回。
 - 数据库迁移文件记录历史结构；开发自动 create_all 不会替代生产迁移。
 - 当前第四章样书索引因上游 embedding 额度不足停止，目录说明不把这种外部失败描述为入库成功。
+
+## 长篇与生产管理（2026-10-25）
+
+| 文件 | 职责 |
+| --- | --- |
+| backend/app/models/studio.py | 来源、来源章节、基线、导入映射、有限计划、投稿快照、私人方法、逐调用计量、索引代次和章节指纹 |
+| backend/app/api/library.py | 上传/拆章预览/范围确认/来源撤销 HTTP |
+| backend/app/api/studio.py | 来源分析、连续计划、暂停恢复取消、显式重试 HTTP |
+| backend/app/api/releases.py | 投稿包/作者回执/私人方法 HTTP |
+| backend/app/services/library.py | 所有权、原文保存、接管基线、独立分支和限定来源查询 |
+| backend/app/services/studio_tasks.py | SQL领取、分段检查点、有限连续推进、工作任务衔接 |
+| backend/app/services/metering.py | 预算预留、逐调用结算、未知用量恢复、兼容旧流水 |
+| backend/app/services/index_manifest.py | 正文向量/图代次暂存、校验激活和有效ID解析 |
+| backend/app/services/narrative_memory.py | 有效版本摘要/事实/伏笔的有限上下文查询 |
+| backend/app/services/project_cleanup.py | 删除依赖树前检查运行资格和其他分支的来源引用 |
+| packages/storyclaw/src/storyclaw/workflows/library.py | TXT/DOCX纯解析、模型摘要/证据校验、来源索引 |
+| packages/storyclaw/src/storyclaw/metering.py | 模型调用生命周期与宿主计量回调，不访问业务库 |
+| frontend/src/components/StudioManager.tsx | 创作管理四个面板及来源原文/进度预览 |
+| backend/tests/test_studio.py | 容量、接管/分支、预算、索引、候选采用、删除和12章流程验收 |
+
+完整实施边界参见 [重构实施记录](AGENT-REFACTOR-STATUS.md)。
+
+## 运行可靠性补全
+
+- `backend/app/worker.py`：独立消费者进程、子消费者存活检查和文件心跳；Docker配置API不消费队列，Worker消费Job/Run/长期计划/清理/预约投递。
+- `backend/app/ops_cli.py`：只读任务计数、私有存储/物理索引烟测、有限模型探测、旧原稿迁移；不提供清库操作。
+- `backend/app/models/operations.py`：原稿对象指针、清理任务、用量回执、预约投递、历史前缀、叙事实体/事实/视角/版本。
+- `backend/app/services/blob_store.py`：S3/MinIO SigV4私有读写、完整性校验及逐份迁移。
+- `backend/app/services/cleanup.py`：延迟清理outbox、有效引用复核、幂等物理删除及重试。
+- `backend/app/services/history_prefix.py`：增量历史依赖链；数据库触发器删除受影响后缀。
+- `backend/app/services/usage_reconciliation.py`：供应商回执、原价格快照对账和原子余额调整。
+- `backend/app/services/narrative_state.py`、`api/narrative.py`：有来源的事实入表、作者审阅、别名、时间和知情范围适配。
+- `packages/storyclaw/src/storyclaw/knowledge/policy.py`：纯函数处理人物知识视图、别名冲突及因果环，不依赖后端数据库。
+- `backend/app/services/release_delivery.py`：本站预约公开的原子投递，外部投递保持手动。
+- `frontend/src/components/NarrativeState.tsx`：叙事记忆审阅和当前章节视角；`admin-frontend/src/components/UsageReconciliation.tsx`：运营对账及清理任务。

@@ -40,6 +40,7 @@ class StoryClawDeps:
     load_context: Optional[Callable[[Any, int, int, int], Awaitable[dict]]] = None
     embedding_resolver: Optional[Callable[[], Awaitable[dict | None]]] = None
     context_limit_resolver: Optional[Callable[[dict], int | None]] = None
+    index_resolver: Any = None
     rag: Any = None
     checkpointer: Any = None
     tool_executor: Optional[Callable[[str, dict, int, int, int | None], Awaitable[str]]] = None

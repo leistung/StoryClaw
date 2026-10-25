@@ -1,9 +1,9 @@
 """Durable run lifecycle, author decisions and job links. No model prompts here."""
-import hashlib,json
+import hashlib,json,asyncio,logging
 from datetime import datetime,timezone,timedelta
 from uuid import uuid4
 from fastapi import HTTPException
-from sqlalchemy import select,text,update
+from sqlalchemy import select,text,update,or_,and_
 from storyclaw.contracts import AgentRequest
 from ..database import AsyncSessionLocal
 from ..models import Book,Chapter,User
@@ -49,10 +49,11 @@ async def create(request,uid,db):
     row=AgentRun(id=str(uuid4()),user_id=uid,request_id=request.request_id,fingerprint=fingerprint,
                  request=request.model_dump(),status='accepted',event_seq=0,credits_cost=0,reserved=0)
     db.add(row);await db.flush();await event(db,row,'run.accepted',{'status':'accepted'})
-    if request.entry=='command':
+    inline=request.entry=='command' and (cap.job_kind is not None or cap.name in ('project.status','material.read','memory.search'))
+    if inline:
         row.status='running';row.lease_until=now()+timedelta(minutes=15)
     await db.commit()
-    if request.entry=='command':
+    if inline:
         await execute_run(row.id)
         await db.refresh(row)
     return out(row)
@@ -92,7 +93,7 @@ async def execute_run(rid):
         result=await StoryClaw(BackendStoryPorts(rid,uid,request)).run(request,history=history)
         await finish(rid,result.status,result.model_dump())
     except Exception as exc:
-        message=str(exc.detail) if isinstance(exc,HTTPException) else '创作请求未完成，请核对执行记录后再尝试。'
+        message=str(exc.detail) if isinstance(exc,HTTPException) else str(exc) if isinstance(exc,ValueError) else '创作请求未完成，请核对执行记录后再尝试。'
         import logging
         logging.getLogger(__name__).exception('Agent run failed id=%s',rid)
         await finish(rid,'failed',error=message[:600])
@@ -100,14 +101,15 @@ async def execute_run(rid):
 async def poll_once():
     """Claim one run; expired paid execution is not automatically retried."""
     async with AsyncSessionLocal() as db:
-        expired=list(await db.scalars(select(AgentRun).where(AgentRun.status=='running',AgentRun.lease_until<now()).with_for_update()))
+        expired=list(await db.scalars(select(AgentRun).where(AgentRun.lease_until<now(),or_(AgentRun.status=='running',AgentRun.reserved>0)).with_for_update()))
         for row in expired:
-            row.status='failed';row.error='服务中断或执行超时；结果可能不确定，请核对回执，不会自动重试付费调用。'
+            if row.status!='cancelled':row.status='failed'
+            row.error='服务中断或执行超时；结果可能不确定，请核对回执，不会自动重试付费调用。'
             # Reservations are safely returned to platform balance; supplier cost can remain unknown.
             if row.reserved:
                 await db.execute(update(User).where(User.id==row.user_id).values(credits_balance=User.credits_balance+row.reserved))
                 row.reserved=0
-            await event(db,row,'run.status',{'status':'failed','error':row.error})
+            await event(db,row,'run.status',{'status':row.status,'error':row.error})
         row=await db.scalar(select(AgentRun).where(AgentRun.status=='accepted').order_by(AgentRun.created_at).with_for_update(skip_locked=True).limit(1))
         rid=None
         if row:
@@ -123,5 +125,20 @@ async def poll_once():
                     'data':{'job_id':job.id,'job_result':job.result}};r.error=job.error
                 await event(db,r,'run.status',{'status':r.status,'result':r.result})
         await db.commit()
-    if rid:await execute_run(rid)
+    if rid:
+        try:await execute_run(rid)
+        except asyncio.CancelledError:
+            await finish(rid,'failed',error='服务重启中断本轮；请核对产物与用量，不会自动重复生成。')
+            raise
     return bool(rid)
+
+
+async def queue_loop():
+    """Separate consumer from chapter jobs: a long manuscript task never blocks all chat."""
+    while True:
+        try:
+            if not await poll_once():await asyncio.sleep(2)
+        except asyncio.CancelledError:raise
+        except Exception:
+            logging.getLogger(__name__).exception('Agent queue failed')
+            await asyncio.sleep(3)

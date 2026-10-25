@@ -3,5 +3,11 @@
   "version": 1,
   "description": "命名建议",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "title.suggest"
+  ],
+  "reference_files": [
+    "references/candidates.md"
+  ]
 }

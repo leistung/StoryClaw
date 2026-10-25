@@ -45,6 +45,9 @@ async def _legacy_ideation(data:DiscussionIn,u:User,db:AsyncSession,on_delta=Non
         from storyclaw.ideation.engine import generate_discussion
         result,ins,outs,model=await generate_discussion(data,state,on_delta)
     except (ValueError,TypeError) as exc:
+        from storyclaw.metering import active_meter
+        from ..services.metering import refund_format_failure
+        await refund_format_failure(active_meter.get(),u.id)
         logging.getLogger(__name__).warning('Ideation validation failed: %s',exc.errors(include_input=False) if hasattr(exc,'errors') else f'{type(exc).__name__}: {getattr(exc,"msg",str(exc))}')
         raise HTTPException(502,'AI 回复格式异常，本轮未扣积分。请点击重试本次请求；你的问题仍保留。' if data.mode=='discuss' else '开书方案格式异常，本轮未扣积分，尚未创建书籍。请重试本次请求。') from exc
     except asyncio.TimeoutError as exc:raise HTTPException(504,'选题讨论超时，未创建书籍，请稍后重试') from exc
@@ -123,3 +126,6 @@ async def ideation_stream(data:DiscussionIn,u:User=Depends(get_current_user)):
             if not task.done():task.cancel()
             with suppress(asyncio.CancelledError):await task
     return StreamingResponse(events(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+
+from ..services.metering import metered
+_legacy_ideation = metered(_legacy_ideation)

@@ -28,6 +28,6 @@ async def describe(name: str, u: User = Depends(get_current_user)):
         meta = describe_skill(name)
     except Exception as e:
         raise HTTPException(500, f"加载 skill 失败: {e}")
-    if not meta or meta.get("description") == "(SKILL.md not found)":
+    if not meta or not meta.get("available",True):
         raise HTTPException(404, "skill 不存在")
     return meta

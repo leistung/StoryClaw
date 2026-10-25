@@ -25,3 +25,14 @@ def clean_html(text):
 def reading_html(text):
     if '<p' in text or '<h' in text:return clean_html(text)
     return ''.join('<p>'+escape(p)+'</p>' for p in text.splitlines() if p.strip())
+
+
+def plain_text(text):
+    class Text(HTMLParser):
+        def __init__(self):super().__init__(convert_charrefs=True);self.parts=[]
+        def handle_data(self,data):self.parts.append(data)
+        def handle_endtag(self,tag):
+            if tag in ('p','div','li','h1','h2','h3','blockquote'):self.parts.append('\n')
+        def handle_starttag(self,tag,attrs):
+            if tag=='br':self.parts.append('\n')
+    parser=Text();parser.feed(text or '');parser.close();return ''.join(parser.parts)

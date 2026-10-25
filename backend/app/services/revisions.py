@@ -18,6 +18,8 @@ async def assert_editable(db, cid):
     if await db.scalar(query):raise HTTPException(409,'该章节有待执行或运行中的任务，请等待任务完成后编辑')
 
 async def snapshot(db, chapter, source):
+    from .library import invalidate_import
+    await invalidate_import(db,chapter)
     from .serial import invalidate_following
     await invalidate_following(db,chapter,f'第{chapter.number}章正文或标题已变更，请复核后文')
     if not chapter.content and not chapter.title:return

@@ -3,5 +3,14 @@
   "version": 1,
   "description": "来源化一致性审阅",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "chapter.write",
+    "chapter.revise",
+    "book.analyze"
+  ],
+  "reference_files": [
+    "references/knowledge.md",
+    "references/repetition.md"
+  ]
 }

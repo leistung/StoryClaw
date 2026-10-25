@@ -3,5 +3,12 @@
   "version": 1,
   "description": "人物塑造",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "setting.draft",
+    "book.analyze"
+  ],
+  "reference_files": [
+    "references/motivation.md"
+  ]
 }

@@ -105,13 +105,14 @@ async def update_book(bid: int, data: BookUpdateIn, u: User = Depends(get_curren
 
 @router.delete("/{bid}")
 async def delete_book(bid: int, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    b = await db.get(Book, bid)
+    b = await db.scalar(select(Book).where(Book.id==bid,Book.user_id==u.id).with_for_update())
     if not b or b.user_id != u.id:
         raise HTTPException(404, "书籍不存在")
     from ..models.product import WorkJob
     if await db.scalar(select(WorkJob.id).where(WorkJob.book_id==bid,WorkJob.status.in_(['queued','running']))):
         raise HTTPException(409,'作品有未完成任务，请等待或取消后再删除')
-    await db.delete(b)
+    from ..services.project_cleanup import delete_project
+    await delete_project(db,b)
     await db.commit()
     return {"ok": True}
 

@@ -3,5 +3,13 @@
   "version": 1,
   "description": "场景与对白打磨",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "text.scene_enhance",
+    "text.dialogue_polish"
+  ],
+  "reference_files": [
+    "references/scene.md",
+    "references/dialogue.md"
+  ]
 }

@@ -190,6 +190,41 @@ async def update_embedding(data: EmbeddingConfig, admin: User = Depends(get_admi
     await save_config(db, "embedding.yaml", value, admin.id)
     return {"ok": True}
 
+@router.get('/model-calls')
+async def model_calls(page:int=1,admin:User=Depends(get_admin_user),db:AsyncSession=Depends(get_db)):
+    from ..models.studio import ModelCall
+    if page<1:raise HTTPException(422,'页码无效')
+    rows=await db.scalars(select(ModelCall).order_by(ModelCall.created_at.desc()).offset((page-1)*50).limit(50))
+    return [{'id':r.id,'actor_id':r.user_id,'action':r.status,'target':r.model,'created_at':r.created_at,
+        'details':{'reserved':r.reserved,'credits_cost':r.cost,'usage':r.usage,'job_id':r.job_id,'plan_id':r.plan_id}} for r in rows]
+
+from pydantic import BaseModel,Field,ConfigDict
+class UsageReceiptIn(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    request_id:str=Field(min_length=16,max_length=100)
+    input_tokens:int=Field(ge=0,le=100000000)
+    output_tokens:int=Field(ge=0,le=100000000)
+    supplier_reference:str=Field(min_length=3,max_length=255)
+    note:str=Field(min_length=5,max_length=4000)
+    adjust_user_balance:bool=False
+@router.post('/model-calls/{cid}/reconcile')
+async def reconcile_usage(cid:str,data:UsageReceiptIn,admin:User=Depends(get_admin_user),db:AsyncSession=Depends(get_db)):
+    from ..services.usage_reconciliation import reconcile
+    return await reconcile(db,admin,cid,data)
+@router.get('/cleanup-tasks')
+async def cleanup_tasks(admin:User=Depends(get_admin_user),db:AsyncSession=Depends(get_db)):
+    from ..models.operations import CleanupTask
+    rows=await db.scalars(select(CleanupTask).order_by(CleanupTask.created_at.desc()).limit(100))
+    return [{k:getattr(r,k) for k in ('id','kind','status','attempts','error','due_at')} for r in rows]
+@router.post('/cleanup-tasks/{tid}/retry')
+async def retry_cleanup(tid:str,admin:User=Depends(get_admin_user),db:AsyncSession=Depends(get_db)):
+    from ..models.operations import CleanupTask
+    from datetime import datetime,timezone
+    row=await db.scalar(select(CleanupTask).where(CleanupTask.id==tid).with_for_update())
+    if not row:raise HTTPException(404,'清理记录不存在')
+    if row.status!='failed':raise HTTPException(409,'仅失败的清理任务需要重试')
+    row.status='queued';row.attempts=0;row.due_at=datetime.now(timezone.utc);await db.commit();return {'status':'queued'}
+
 @router.get("/{kind}")
 async def get_config(kind: Literal["pricing", "membership"], admin: User = Depends(get_admin_user)):
     return _load(f"{kind}.yaml")
@@ -208,6 +243,8 @@ async def update_config(kind: Literal["pricing", "membership"], data: dict,
         defaults = data.get("defaults", {})
         if not isinstance(defaults, dict) or type(defaults.get("free_quota", 0)) is not int or not 0 <= defaults.get("free_quota", 0) <= 1000000:
             raise HTTPException(400, "注册赠送积分必须为 0 到 1000000 的整数")
+        rate=defaults.get("embedding_credits_per_1k",1)
+        if type(rate) not in (int,float) or not isfinite(rate) or rate<0:raise HTTPException(400,"向量模型积分价格必须为有效非负数")
         if defaults.get("price_base", "per_1k_tokens") not in {"per_token", "per_1k_tokens", "per_1m_tokens"}:
             raise HTTPException(400, "计价单位无效")
     else:

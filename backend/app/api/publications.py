@@ -38,5 +38,9 @@ async def publish(bid:int,u:User=Depends(get_current_user),db:AsyncSession=Depen
 async def unpublish(bid:int,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
     await own(db,bid,u.id);p=await db.get(Publication,bid)
     if p:p.visible=False
+    from sqlalchemy import update
+    from ..models.operations import ReleaseDelivery
+    from ..models.studio import ReleaseRecord
+    await db.execute(update(ReleaseDelivery).where(ReleaseDelivery.release_id.in_(select(ReleaseRecord.id).where(ReleaseRecord.book_id==bid)),ReleaseDelivery.status=='scheduled').values(status='cancelled'))
     db.add(PlatformEvent(kind='audit',actor_id=u.id,action='book.unpublish',target=str(bid),details={}))
     await db.commit();return {'visible':False}

@@ -66,3 +66,27 @@ async def adopt_design(jid:str,u:User=Depends(get_current_user),db:AsyncSession=
         await invalidate_book(db,j.book_id,'已采用新的作者设定，请复核既有正文')
     j.result=result;await db.commit()
     return result
+
+class CandidateAdoption(BaseModel):
+    expected_hash:str=Field(min_length=64,max_length=64)
+@router.post('/jobs/{jid}/candidate/adopt')
+async def adopt_candidate(jid:str,data:CandidateAdoption,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    from ..services.generation_candidates import adopt
+    return await adopt(db,u.id,jid,data.expected_hash)
+
+@router.post('/jobs/{jid}/candidate/recover')
+async def recover_candidate(jid:str,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    from ..models import Message
+    from storyclaw.runtime import recover_candidate as recover
+    job=await db.scalar(select(WorkJob).where(WorkJob.id==jid,WorkJob.user_id==u.id).with_for_update())
+    if not job or job.kind not in ('generate','revise'):raise HTTPException(404,'生成任务不存在')
+    if job.status!='failed':raise HTTPException(409,'只有已失败任务需要检查点恢复')
+    if (job.result or {}).get('candidate'):return job_out(job)
+    if not job.finished_at:raise HTTPException(409,'任务尚未结束')
+    messages=list(await db.scalars(select(Message).where(Message.user_id==u.id,Message.role=='user',Message.content==job.payload.get('prompt',''),Message.created_at>=job.created_at,Message.created_at<=job.finished_at).order_by(Message.created_at.desc()).limit(10)))
+    for message in messages:
+        result=await recover(message.thread_id,u.id,job.book_id,job.chapter_id)
+        if result:
+            job.result={**(job.result or {}),'thread_id':message.thread_id,'candidate':{'content':result['content'],'chapter_id':job.chapter_id,'base_hash':job.payload['base_hash'],'adopted':False,'warning':'从本次任务时段的同范围检查点恢复；未经最终审阅，请核对后选择采用。'}}
+            await db.commit();return job_out(job)
+    raise HTTPException(404,'没有可恢复的同范围检查点候选，未调用模型')

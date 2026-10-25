@@ -9,6 +9,15 @@ const proxyTarget = process.env.VITE_PROXY_TARGET || 'http://localhost:8000'
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  build: {
+    rollupOptions: {
+      output: {manualChunks(id) {
+        if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react'
+        if (/\/node_modules\/(prosemirror-[^/]+|rope-sequence|orderedmap|w3c-keyname)\//.test(id)) return 'prosemirror'
+        if (id.includes('/node_modules/@tiptap/')) return 'editor'
+      }},
+    },
+  },
   server: {
     host: true,
     port: 5173,

@@ -36,13 +36,13 @@ class SerialWorkflowTests(unittest.IsolatedAsyncioTestCase):
    await req('PUT',f'/chapters/{c1["id"]}/blueprint',plan)
    await req('POST',f'/chapters/{c1["id"]}/blueprint/confirm',plan)
    agent=AsyncMock(return_value={'draft_content':'河灯匠修好了灯，在灯芯里发现了父亲留下的潮线记号。','token_usage':{}})
-   with patch('app.api.chat.run_agent',agent),patch('app.services.pricing.compute_cost',return_value=1):
+   with patch('app.services.chat_workflow.run_agent',agent),patch('app.services.pricing.compute_cost',return_value=1):
     job=await enqueue(c1['id'],'generate');await run_job(job['id'])
    await req('POST','/jobs',{'book_id':bid,'chapter_id':c2['id'],'kind':'chapter-outline','request_id':str(uuid4())},status=409)
    async def index(cid):
     detail=await req('GET',f'/chapters/{cid}')
     job=await enqueue(cid,'index',reviewed_hash=detail['content_hash'])
-    with patch('app.api.rag.rag_svc.ingest_text',AsyncMock(return_value={'chunks':2,'entities':1,'relations':1,'stores':{'vector':'milvus','graph':'neo4j'},'error':None})):
+    with patch('app.services.knowledge_workflow.rag_svc.ingest_text',AsyncMock(return_value={'chunks':2,'entities':1,'relations':1,'stores':{'vector':'milvus','graph':'neo4j'},'error':None})):
      await run_job(job['id'])
    await index(c1['id'])
    plan2=Blueprint(title='潮线入巷',summary='河灯匠循着父亲留下的潮线来到旧巷，询问守潮老人，发现旧码头的灯印与失踪案有关。',ending_hook='老人递来半枚灯印',constraints=['父亲仍然失踪'])

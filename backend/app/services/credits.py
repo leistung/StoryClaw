@@ -4,6 +4,9 @@ from sqlalchemy import update
 from ..models import User
 
 async def debit(db, user, cost):
+    from storyclaw.metering import active_meter
+    meter=active_meter.get()
+    if meter and meter.calls:return  # actual call reservation already settled
     if cost < 0:
         raise ValueError("积分费用不能为负数")
     result = await db.execute(update(User).where(User.id == user.id, User.credits_balance >= cost)

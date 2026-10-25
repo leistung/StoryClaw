@@ -1,6 +1,6 @@
 """Agent Run HTTP adapter. Execution occurs in the durable queue, not the browser connection."""
 from fastapi import APIRouter,Depends,HTTPException,Query
-from pydantic import BaseModel,ConfigDict
+from pydantic import BaseModel,ConfigDict,Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from storyclaw.contracts import AgentRequest
@@ -13,11 +13,11 @@ from ..services import agent_runs as service
 
 router=APIRouter(prefix='/agent',tags=['agent-runs'])
 
-async def owned(rid,u,db,lock=False):
-    q=select(AgentRun).where(AgentRun.id==rid,AgentRun.user_id==u.id)
-    row=await db.scalar(q.with_for_update() if lock else q)
-    if not row:raise HTTPException(404,'请求不存在')
-    return row
+from ..services.agent_decisions import owned
+from ..services.story_ports.agent import BackendStoryPorts
+from storyclaw.agent import StoryClaw
+
+def facade(rid,u):return StoryClaw(BackendStoryPorts(rid,u.id,None))
 
 @router.post('/runs')
 async def create(request:AgentRequest,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
@@ -25,18 +25,18 @@ async def create(request:AgentRequest,u:User=Depends(get_current_user),db:AsyncS
 
 @router.get('/runs')
 async def list_runs(book_id:int|None=None,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
-    rows=list(await db.scalars(select(AgentRun).where(AgentRun.user_id==u.id).order_by(AgentRun.created_at.desc()).limit(100)))
-    return [service.out(r) for r in rows if book_id is None or r.request.get('scope',{}).get('book_id')==book_id]
+    q=select(AgentRun).where(AgentRun.user_id==u.id)
+    if book_id is not None:q=q.where(AgentRun.request['scope']['book_id'].as_integer()==book_id)
+    rows=await db.scalars(q.order_by(AgentRun.created_at.desc()).limit(100))
+    return [service.out(r) for r in rows]
 
 @router.get('/runs/{rid}')
 async def status(rid:str,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
-    return service.out(await owned(rid,u,db))
+    return await facade(rid,u).status(rid)
 
 @router.get('/runs/{rid}/events')
 async def events(rid:str,after_seq:int=Query(0,ge=0),u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
-    await owned(rid,u,db)
-    rows=await db.scalars(select(AgentEvent).where(AgentEvent.run_id==rid,AgentEvent.seq>after_seq).order_by(AgentEvent.seq).limit(200))
-    return [{'id':e.id,'run_id':e.run_id,'seq':e.seq,'type':e.type,'payload':e.payload} for e in rows]
+    return await facade(rid,u).events(rid,after_seq)
 
 class Decision(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -44,35 +44,40 @@ class Decision(BaseModel):
     accept:bool
 
 @router.post('/runs/{rid}/decisions')
-async def decide(rid:str,data:Decision,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
-    row=await owned(rid,u,db,True)
-    decision=row.decision or {}
-    if data.decision_id!=decision.get('id'):raise HTTPException(409,'确认卡已失效')
-    if row.status!='waiting_author':return service.out(row)
-    if not data.accept:
-        row.status='cancelled';await service.event(db,row,'run.status',{'status':'cancelled'});await db.commit();return service.out(row)
-    request=AgentRequest.model_validate(row.request)
-    await service.validate_scope(db,u.id,request.scope)
-    chapter=await db.get(Chapter,request.scope.chapter_id)
-    from ..services.revisions import chapter_hash
-    if not chapter or chapter_hash(chapter)!=decision['content_hash']:raise HTTPException(409,'正文已改变，请核对新稿后重新请求')
-    from ..services.work_commands import create_job,JobInput
-    from storyclaw.orchestration.capabilities import get_capability
-    from uuid import uuid5,NAMESPACE_URL
-    cap=get_capability(decision['command'])
-    body={'request_id':str(uuid5(NAMESPACE_URL,row.id+':'+cap.name)),
-          'book_id':request.scope.book_id,'chapter_id':chapter.id,'kind':cap.job_kind,**decision['payload']}
-    result=await create_job(JobInput.model_validate(body),u,db)
-    # create_job commits its idempotent operation; linking is repeatable after a crash.
-    row.status='waiting_task';row.job_id=result['id'];row.result={'status':'waiting_task','content':'已确认并提交任务','data':{'job_id':result['id']}}
-    await service.event(db,row,'run.status',{'status':'waiting_task','result':row.result});await db.commit();return service.out(row)
+async def decide(rid:str,data:Decision,u:User=Depends(get_current_user)):
+    return await facade(rid,u).resume(rid,data.model_dump())
 
 @router.post('/runs/{rid}/cancel')
-async def cancel(rid:str,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
-    row=await owned(rid,u,db,True)
-    if row.status in service.TERMINAL:return service.out(row)
-    if row.job_id:
-        job=await db.scalar(select(WorkJob).where(WorkJob.id==row.job_id,WorkJob.user_id==u.id).with_for_update())
-        if job and job.status=='running':raise HTTPException(409,'后台任务已执行，请等待当前步骤结束；不会自动启动下一步')
-        if job and job.status=='queued':job.status='cancelled';job.finished_at=service.now()
-    row.status='cancelled';await service.event(db,row,'run.status',{'status':'cancelled'});await db.commit();return service.out(row)
+async def cancel(rid:str,u:User=Depends(get_current_user)):
+    return await facade(rid,u).cancel(rid)
+
+class AdoptCandidate(BaseModel):
+    expected_hash:str=Field(min_length=64,max_length=64)
+
+@router.post('/runs/{rid}/adopt')
+async def adopt_candidate(rid:str,data:AdoptCandidate,u:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    from ..services.agent_decisions import owned
+    from ..models import Chapter,Book
+    from ..services.revisions import assert_editable,chapter_hash,snapshot
+    from storyclaw.continuity import prose
+    from ..services.content import reading_html
+    from sqlalchemy import select
+    row=await owned(rid,u,db,True);result=row.result or {};artifact=result.get('data') or {}
+    if row.status!='succeeded' or not artifact.get('artifact') or artifact.get('adopted'):raise HTTPException(409,'候选不可采用或已经采用')
+    kind=artifact.get('kind','')
+    if not kind.startswith('text.'):raise HTTPException(422,'此候选请在对应资料编辑页手动选择采用')
+    cid=artifact.get('chapter_id');chapter=await db.get(Chapter,cid) if cid else None
+    if not chapter:raise HTTPException(404,'章节不存在')
+    book=await db.scalar(select(Book).where(Book.id==chapter.book_id,Book.user_id==u.id).with_for_update())
+    if not book:raise HTTPException(404,'章节不存在')
+    await db.refresh(chapter);await assert_editable(db,cid)
+    if chapter_hash(chapter)!=data.expected_hash or artifact.get('base_hash')!=data.expected_hash:raise HTTPException(409,'正文已修改，请重新生成或手动对照采用')
+    old=prose(chapter.content);candidate=result.get('content','').strip();selected=artifact.get('selected_text','')
+    if not candidate:raise HTTPException(422,'候选正文为空')
+    if kind=='text.continue':new=old+'\n\n'+candidate
+    else:
+        if not selected or old.count(selected)!=1:raise HTTPException(409,'原片段不存在或有重复，请在编辑器中手动采用')
+        new=old.replace(selected,candidate,1)
+    await snapshot(db,chapter,'agent-candidate');chapter.content=reading_html(new);chapter.word_count=len(''.join(new.split()));chapter.rag_status='pending'
+    row.result={**result,'data':{**artifact,'adopted':True,'adopted_hash':chapter_hash(chapter)}}
+    await db.commit();return {'chapter_id':cid,'content_hash':chapter_hash(chapter),'adopted':True}

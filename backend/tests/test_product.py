@@ -78,7 +78,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    await request('PUT',f'/books/{bid}/outline',{'content':plan},expect=409)
    await request('POST',f'/books/{bid}/outline/confirm',{'content':plan},expect=409)
    from app.services.jobs import run_job
-   with patch('app.api.outlines._call_langgraph',AsyncMock(return_value=(plan,None))) as outline_model:
+   with patch('app.services.outline_workflow._call_langgraph',AsyncMock(return_value=(plan,None))) as outline_model:
     await run_job(outline_job['id'])
     outline_model.assert_awaited_once()
    self.assertEqual((await request('GET','/jobs/'+outline_job['id']))['status'],'succeeded')
@@ -103,15 +103,15 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(next(r for r in cards if r['name']=='力量代价')['description'],'手工设定不可覆盖')
    # AI changes are versioned and charged in the same transaction, without a paid model.
    agent=AsyncMock(return_value={'draft_content':'来自模型的新稿。','token_usage':{'model_id':'platform-test','in_tokens':1,'out_tokens':1}})
-   with patch('app.api.chat.run_agent',agent),patch('app.api.chat._build_input',AsyncMock(return_value={})),patch('app.services.setting_sync.launch'):
+   with patch('app.services.chat_workflow.run_agent',agent),patch('app.services.chat_workflow._build_input',AsyncMock(return_value={})),patch('app.services.setting_sync.launch'):
     await request('POST',f'/chapters/{cid}/generate',{})
    self.assertTrue(any(r['source']=='ai' for r in await request('GET',f'/chapters/{cid}/revisions')))
    before=(await request('GET',f'/chapters/{cid}'))['content']
    from fastapi import HTTPException
-   with patch('app.api.chat.run_agent',agent),patch('app.api.chat._build_input',AsyncMock(return_value={})),patch('app.api.chat.debit',AsyncMock(side_effect=HTTPException(402,'积分不足'))):
+   with patch('app.services.chat_workflow.run_agent',agent),patch('app.services.chat_workflow._build_input',AsyncMock(return_value={})),patch('app.services.chat_workflow.debit',AsyncMock(side_effect=HTTPException(402,'积分不足'))):
     await request('POST',f'/chapters/{cid}/generate',{},expect=402)
    self.assertEqual((await request('GET',f'/chapters/{cid}'))['content'],before)
-   with patch('app.api.writing.run_agent',agent),patch('app.api.writing.build_write_context',AsyncMock(return_value={})),patch('app.api.writing.debit',AsyncMock(side_effect=HTTPException(402,'积分不足'))):
+   with patch('app.services.writing_workflow.run_agent',agent),patch('app.services.writing_workflow.build_write_context',AsyncMock(return_value={})),patch('app.services.writing_workflow.debit',AsyncMock(side_effect=HTTPException(402,'积分不足'))):
     batch=await request('POST',f'/books/{bid}/multi-write',{'start_number':1,'end_number':1,'skip_existing':False,'sync_settings':False})
    self.assertEqual(batch['chapters'][0]['status'],'error')
    self.assertEqual(batch['total_credits_cost'],0)
@@ -121,7 +121,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    entered=asyncio.Event();release=asyncio.Event()
    async def slow_agent(*args):
     entered.set();await release.wait();return {'draft_content':'迟到的生成稿','token_usage':{}}
-   with patch('app.api.chat.run_agent',slow_agent),patch('app.api.chat._build_input',AsyncMock(return_value={})),patch('app.services.setting_sync.launch'):
+   with patch('app.services.chat_workflow.run_agent',slow_agent),patch('app.services.chat_workflow._build_input',AsyncMock(return_value={})),patch('app.services.setting_sync.launch'):
     late=asyncio.create_task(client.post(f'/api/v1/chapters/{cid}/generate',headers=owner,json={}))
     await asyncio.wait_for(entered.wait(),5)
     await request('PUT',f'/chapters/{cid}',{'content':'并发编辑的新正文。'})
@@ -140,7 +140,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
     j=await db.get(WorkJob,job['id']);j.status='running';await db.commit()
    from app.schemas import IngestOut
    from app.services.jobs import run_job
-   with patch('app.api.rag.ingest_chapter_endpoint',AsyncMock(return_value=IngestOut(chapter_id=cid,chunks=3,entities=2,relations=1,rag_status='loaded',error=None))):await run_job(job['id'])
+   with patch('app.services.knowledge_workflow.ingest_chapter_endpoint',AsyncMock(return_value=IngestOut(chapter_id=cid,chunks=3,entities=2,relations=1,rag_status='loaded',error=None))):await run_job(job['id'])
    self.assertEqual((await request('GET','/jobs/'+job['id']))['status'],'succeeded')
    # A failed worker records a terminal error rather than leaving a spinner forever.
    import asyncio
@@ -167,7 +167,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    await request('POST','/jobs',{'book_id':bid,'chapter_id':cid,'kind':'index','request_id':str(uuid4())},expect=409)
    current=await request('GET',f'/chapters/{cid}')
    index_job=await request('POST','/jobs',{'book_id':bid,'chapter_id':cid,'kind':'index','request_id':str(uuid4()),'reviewed_hash':current['content_hash']})
-   with patch('app.api.rag.rag_svc.ingest_text',AsyncMock(return_value={'chunks':2,'entities':1,'relations':0,'stores':{'vector':'milvus','graph':'neo4j'},'error':None})):
+   with patch('app.services.knowledge_workflow.rag_svc.ingest_text',AsyncMock(return_value={'chunks':2,'entities':1,'relations':0,'stores':{'vector':'milvus','graph':'neo4j'},'error':None})):
     await run_job(index_job['id'])
    self.assertEqual((await request('GET',f'/chapters/{cid}'))['rag_status'],'loaded')
    next_job=await request('POST','/jobs',{**next_body,'request_id':str(uuid4())})

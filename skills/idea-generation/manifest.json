@@ -3,5 +3,11 @@
   "version": 1,
   "description": "创意发散",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "idea.brainstorm"
+  ],
+  "reference_files": [
+    "references/alternatives.md"
+  ]
 }

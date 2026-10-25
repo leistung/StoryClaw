@@ -3,5 +3,13 @@
   "version": 1,
   "description": "情节与场景设计",
   "kind": "method",
-  "trust": "platform"
+  "trust": "platform",
+  "compatible_capabilities": [
+    "chapter.plan",
+    "chapter.scenes",
+    "book.analyze"
+  ],
+  "reference_files": [
+    "references/chapter.md"
+  ]
 }

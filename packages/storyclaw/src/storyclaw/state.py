@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     current_content: str
     status: str                              # running | finished | error | review_retry
     error: str | None
+    error_code: str | None
     # P1-6 扩展
     selected_text: str
     polish_goal: str

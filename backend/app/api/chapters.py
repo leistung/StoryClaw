@@ -98,6 +98,10 @@ async def delete_chapter(cid: int, u: User = Depends(get_current_user), db: Asyn
     await assert_editable(db, cid)
     from ..services.serial import invalidate_following
     await invalidate_following(db,c,f'第{c.number}章已删除，请复核后文')
+    from ..services.library import invalidate_import
+    await invalidate_import(db,c)
+    from ..services.cleanup import prepare_chapter
+    await prepare_chapter(db,c)
     await db.delete(c)
     await db.commit()
     return {"ok": True}

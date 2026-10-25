@@ -1,12 +1,6 @@
-"""Skill 发现与加载（DeerFlow 风格）。
+"""创作方法资源加载：旧名兼容、版本哈希和受限参考读取。
 
-统一结构（skills/<skill-name>/）：
-    SKILL.md           # 说明书（核心）
-    scripts/           # 可执行脚本
-    references/        # 参考文档
-    assets/            # 静态资源
-
-Agent 通过 `describe_skill(name)` 获取元数据，再把 SKILL.md 全文注入 prompt 或工具。
+SKILL.md / references 只提供方法，不执行脚本或授予业务权限。
 """
 from __future__ import annotations
 
@@ -39,8 +33,31 @@ def canonical_skill(name: str) -> str:
 
 def method_instructions(name: str) -> str:
     sections = read_skill_sections(name, ("method", "constraints"))
-    return "\n\n".join(f"[{key}]\n{value}" for key,value in sections.items() if value)
+    result="\n\n".join(f"[{key}]\n{value}" for key,value in sections.items() if value)
+    refs=describe_skill(name).get('reference_files',[])
+    preferred={'modify-chapter':'references/revise.md','write-chapter':'references/write.md',
+        'continue-writing':'references/continue.md','polish-chapter':'references/polish.md',
+        'scene-enhance':'references/scene.md','dialogue-polish':'references/dialogue.md'}.get(name)
+    for reference in ([preferred] if preferred and preferred in refs else refs[:1]):
+        text=read_skill_reference(name,reference)
+        if text:result+='\n\n[创作参考]\n'+text
+    return result
 
+
+def _method_hash(path: Path) -> str:
+    digest=hashlib.sha256()
+    for resource in sorted(path.parent.rglob('*')):
+        if resource.is_file() and resource.suffix in ('.md','.json') and resource.resolve().is_relative_to(path.parent.resolve()):
+            digest.update(str(resource.relative_to(path.parent)).encode());digest.update(resource.read_bytes())
+    return digest.hexdigest()
+
+
+def read_skill_reference(name: str, relative: str) -> str:
+    path=_find_skill_path(name)
+    if path is None or not relative.startswith('references/'):return ''
+    resource=(path.parent/relative).resolve()
+    if not resource.is_relative_to(path.parent.resolve()) or not resource.is_relative_to((path.parent/'references').resolve()) or not resource.is_file() or resource.suffix!='.md':return ''
+    return resource.read_text()[:6000]
 
 
 def describe_skill(skill_name: str) -> dict[str, Any]:
@@ -56,7 +73,8 @@ def describe_skill(skill_name: str) -> dict[str, Any]:
     manifest_path = path.parent / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     result.update(available=True, requested_name=skill_name, version=manifest.get("version", 1),
-                  content_hash=hashlib.sha256(text.encode()).hexdigest(), kind="method")
+                  content_hash=_method_hash(path), kind="method",
+                  compatible_capabilities=manifest.get("compatible_capabilities",[]), reference_files=manifest.get("reference_files",[]))
     return result
 
 

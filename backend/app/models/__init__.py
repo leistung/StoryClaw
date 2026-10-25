@@ -22,3 +22,9 @@ from .platform import PlatformConfig, PlatformEvent
 from .product import ChapterRevision, WorkJob, Publication, PostModeration, PostComment, PostLike, ContentReport, MembershipOrder, MembershipEntitlement
 from .ideation import IdeationSession
 from .agent import AgentRun, AgentEvent
+from .studio import (StorySource, SourceChapter, ProjectBaseline, ImportedChapter,
+                     StudioTask, ReleaseRecord, PrivateMethod, ModelCall,
+                     IndexManifest, ChapterFingerprint, SourceIndex)
+from .operations import SourceBlob,CleanupTask,UsageReceipt,ReleaseDelivery
+from .operations import HistoryPrefix
+from .operations import NarrativeEntity,NarrativePolicy,NarrativeFocus,NarrativeFact

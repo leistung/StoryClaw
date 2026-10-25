@@ -9,6 +9,8 @@ from ..state import AgentState
 
 
 async def reviewer(state: AgentState) -> dict:
+    if state.get("error") or state.get("status")=="error":
+        return {"status":"error","review_feedback":"生成或修订已中断；已有候选不等于审阅通过。"}
     draft = state.get("draft_content") or ""
     ctx = state.get("context") or {}
     chapter_meta = ctx.get("chapter_meta") or {}
@@ -28,6 +30,8 @@ async def reviewer(state: AgentState) -> dict:
     if modify_req and active_skill == "modify-chapter" and round_n < 2:
         try:
             satisfied = await _llm_check_modify(draft, modify_req, state)
+            if satisfied.get("unknown"):
+                return {"status":"error","error":"修订审阅结果不可用，请人工核对候选。","error_code":"review_unavailable"}
             if not satisfied["pass"]:
                 return {"review_feedback": f"修改未达标：{satisfied['reason']}，请按要求重写",
                         "review_round": round_n, "status": "review_retry"}
@@ -37,8 +41,9 @@ async def reviewer(state: AgentState) -> dict:
                 "messages": [{"role": "assistant", "content": draft[:200] + "...(章节已修改)"}],
                 "status": "finished",
             }
-        except Exception:
-            pass  # LLM 检查失败，降级为字数检查
+        except Exception as exc:
+            from ..errors import model_failure
+            return {"status":"error",**model_failure(exc)}
 
     from ..continuity import repetition_evidence
     reuse=repetition_evidence(draft,ctx.get('recent_chapter_text',''))
@@ -65,7 +70,7 @@ async def _llm_check_modify(draft: str, modify_req: str, state: AgentState) -> d
             f"【修改要求】{modify_req}\n\n【草稿前1000字】{draft[:1000]}",
         )
     except Exception:
-        return {"pass": True, "reason": "LLM 不可用，跳过修改检查"}
+        raise
     content = content.strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -73,4 +78,4 @@ async def _llm_check_modify(draft: str, modify_req: str, state: AgentState) -> d
         result = json.loads(content)
         return {"pass": bool(result.get("pass", True)), "reason": str(result.get("reason", ""))}
     except Exception:
-        return {"pass": True, "reason": "解析失败，默认通过"}
+        return {"pass":False,"unknown":True,"reason":"审阅格式不可用，不能默认通过"}

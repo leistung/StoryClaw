@@ -59,7 +59,9 @@ async def lifespan(app: FastAPI):
 
 
         saver = await build_checkpointer(getattr(settings, "database_url", None))
+        from .services.index_manifest import resolve as index_resolver
         sc_configure(
+            index_resolver=index_resolver,
             llm_factory=llm_svc.build_llm_from_choice,
             load_memory=_load_memory_cb,
             save_memory=_save_memory_cb,
@@ -74,14 +76,20 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger("storyclaw").warning(f"storyclaw configure skipped: {e}")
     import asyncio
-    from .services.jobs import queue_loop
-    consumer=asyncio.create_task(queue_loop())
+    tasks=[]
+    if settings.workers_enabled:
+        from .services.jobs import queue_loop
+        from .services.agent_runs import queue_loop as agent_queue
+        from .services.studio_tasks import queue_loop as studio_queue
+        from .services.cleanup import queue_loop as cleanup_queue
+        from .services.release_delivery import queue_loop as release_queue
+        tasks=[asyncio.create_task(loop()) for loop in (queue_loop,agent_queue,agent_queue,agent_queue,studio_queue,cleanup_queue,release_queue)]
+    app.state.worker_tasks=tasks
     try:
         yield
     finally:
-        consumer.cancel()
-        try:await consumer
-        except asyncio.CancelledError:pass
+        for task in tasks:task.cancel()
+        await asyncio.gather(*tasks,return_exceptions=True)
 
 
 setup_logging(getattr(settings, "log_level", "INFO"))
@@ -187,3 +195,11 @@ app.include_router(serial.router,prefix=API_PREFIX)
 
 from .api import agent
 app.include_router(agent.router,prefix=API_PREFIX)
+from .api import library
+app.include_router(library.router,prefix=API_PREFIX)
+from .api import studio
+app.include_router(studio.router,prefix=API_PREFIX)
+from .api import releases
+app.include_router(releases.router,prefix=API_PREFIX)
+from .api import narrative
+app.include_router(narrative.router,prefix=API_PREFIX)

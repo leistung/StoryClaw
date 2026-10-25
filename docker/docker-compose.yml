@@ -100,13 +100,19 @@ services:
       timeout: 10s
       retries: 10
 
-  backend:
+  backend: &backend-service
+    image: storyclaw-backend
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
     container_name: storyclaw-backend
     env_file: ../.env
     environment:
+      WORKERS_ENABLED: "false"
+      SOURCE_STORAGE_BACKEND: s3
+      SOURCE_S3_ENDPOINT: http://minio:9000
+      SOURCE_S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-storyclaw}
+      SOURCE_S3_SECRET_KEY: ${MINIO_SECRET_KEY:-storyclaw_minio_pwd}
       DATABASE_URL: ${DATABASE_URL}
       MILVUS_HOST: ${MILVUS_HOST}
       MILVUS_PORT: ${MILVUS_PORT}
@@ -140,6 +146,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  worker:
+    <<: *backend-service
+    container_name: storyclaw-worker
+    ports: []
+    command: ["watchfiles", "--filter", "python", "python -m app.worker", "/app/backend", "/app/storyclaw_src"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
 
   frontend:
     build:

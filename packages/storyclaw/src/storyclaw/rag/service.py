@@ -102,14 +102,20 @@ async def ingest_text(
             ents, rels = await _extract_entities_llm(content, model_choice)
             if _neo4j.available or _neo4j.connect():
                 ent_count, rel_count = _neo4j.upsert_chapter(user_id, book_id, chapter_id, ents, rels)
+                if ent_count!=len(ents) or rel_count!=len(rels):raise ValueError("图谱写入不完整，未激活记忆")
             else:
                 _mem.upsert_graph(user_id, book_id, chapter_id, ents, rels)
                 ent_count, rel_count = len(ents), len(rels)
         except Exception as e:
             return {"chunks": n, "entities": 0, "relations": 0,
                     "error": f"实体抽取失败（切片已入库）: {e}", "stores": _store_flags()}
+    try:
+        from ..workflows.library import digest_document
+        memory=await digest_document(content) if extract_entities else {}
+    except Exception as exc:
+        return {"chunks":n,"entities":ent_count,"relations":rel_count,"error":f"章节摘要/证据生成失败: {exc}","stores":_store_flags()}
     return {"chunks": n, "entities": ent_count, "relations": rel_count,
-            "error": None, "stores": _store_flags()}
+            "memory":memory,"error": None, "stores": _store_flags()}
 
 
 async def _extract_segment(content: str, model_choice: dict | None) -> tuple[list[dict], list[dict]]:
@@ -151,11 +157,15 @@ async def _extract_entities_llm(content,model_choice):
             relations[(r.get('from'),r.get('type'),r.get('to'))]=r
     return list(entities.values()),list(relations.values())
 
-async def query_context(user_id: int, book_id: int, query: str, top_k: int = 5, allowed_chapter_ids: list[int] | None = None) -> dict:
+async def query_context(user_id: int, book_id: int, query: str, top_k: int = 5, allowed_chapter_ids: list[int] | None = None, *, resolve_manifest: bool = True) -> dict:
     """混合检索：向量语义（Milvus）+ 图谱实体（Neo4j）。
 
     Returns {"chunks","entities","relations","query","error"}。
     """
+    from ..deps import get_deps
+    resolver=get_deps().index_resolver if resolve_manifest else None
+    mapping=await resolver(user_id,book_id,allowed_chapter_ids) if resolver else None
+    if mapping is not None:allowed_chapter_ids=list(mapping)
     if not query or not query.strip():
         return {"chunks": [], "entities": [], "relations": [], "query": query}
     if allowed_chapter_ids == []:
@@ -170,18 +180,21 @@ async def query_context(user_id: int, book_id: int, query: str, top_k: int = 5, 
                 "error": f"Embedding 失败: {e}"}
     try:
         if _milvus.available or _milvus.connect():
-            chunks = _milvus.search(user_id, book_id, q_vec, min(50,top_k*4) if allowed_chapter_ids is not None else top_k)
+            chunks = _milvus.search(user_id, book_id, q_vec, top_k, allowed_chapter_ids=allowed_chapter_ids)
             if _neo4j.available or _neo4j.connect():
-                graph = _neo4j.query_related(user_id, book_id, query.strip(), 8)
+                graph = _neo4j.query_related(user_id, book_id, query.strip(), 8, allowed_chapter_ids=allowed_chapter_ids)
             else:
-                graph = _mem.query_related(user_id, book_id, query.strip(), 8)
+                graph = _mem.query_related(user_id, book_id, query.strip(), 8, allowed_chapter_ids=allowed_chapter_ids)
         else:
-            chunks = _mem.search(user_id, book_id, q_vec, min(50,top_k*4) if allowed_chapter_ids is not None else top_k)
-            graph = _mem.query_related(user_id, book_id, query.strip(), 8)
+            chunks = _mem.search(user_id, book_id, q_vec, top_k, allowed_chapter_ids=allowed_chapter_ids)
+            graph = _mem.query_related(user_id, book_id, query.strip(), 8, allowed_chapter_ids=allowed_chapter_ids)
         if allowed_chapter_ids is not None:
             allowed=set(allowed_chapter_ids)
             chunks=[c for c in chunks if c.get('chapter_id') in allowed][:top_k]
             graph={key:[r for r in graph.get(key,[]) if r.get('chapter_id') in allowed] for key in ('entities','relations')}
+        if mapping is not None:
+            chunks=[{**c,"chapter_id":mapping[c["chapter_id"]]} for c in chunks]
+            graph={k:[{**r,"chapter_id":mapping[r["chapter_id"]]} for r in graph.get(k,[])] for k in ("entities","relations")}
         return {
             "chunks": chunks,
             "entities": graph.get("entities", []),
@@ -194,25 +207,34 @@ async def query_context(user_id: int, book_id: int, query: str, top_k: int = 5, 
         return {'chunks':[],'entities':[],'relations':[],'query':query,'error':'故事记忆检索失败，请检查向量库和图数据库后重试'}
 
 
-async def book_graph(user_id: int, book_id: int) -> dict:
-    """整本书图谱（数据库页）。"""
-    if _neo4j.available or _neo4j.connect():
-        return _neo4j.book_graph(user_id, book_id)
-    return _mem.book_graph(user_id, book_id)
+async def _visible_graph(user_id,book_id,query,limit):
+    from ..deps import get_deps
+    resolver=get_deps().index_resolver
+    mapping=await resolver(user_id,book_id,None) if resolver else None
+    allowed=list(mapping) if mapping is not None else None
+    if allowed==[]:return {'entities':[],'relations':[]}
+    store=_neo4j if (_neo4j.available or _neo4j.connect()) else _mem
+    graph=store.query_related(user_id,book_id,query,limit,allowed_chapter_ids=allowed)
+    if mapping is not None:
+        graph={key:[{**r,'chapter_id':mapping[r['chapter_id']]} for r in graph.get(key,[]) if r.get('chapter_id') in mapping] for key in ('entities','relations')}
+    return graph
 
+async def book_graph(user_id: int, book_id: int) -> dict:
+    return await _visible_graph(user_id,book_id,'',200)
 
 async def related_to_name(user_id: int, book_id: int, name: str, limit: int = 20) -> dict:
-    """配置实体页「从数据库加载」：按名称匹配实体与关系。"""
-    if _neo4j.available or _neo4j.connect():
-        return _neo4j.related_to_name(user_id, book_id, name, limit)
-    return _mem.related_to_name(user_id, book_id, name, limit)
+    return await _visible_graph(user_id,book_id,name,limit)
 
 
 async def get_status(user_id: int, book_id: int, chapters: list[dict]) -> dict:
     """章节入库状态：chapters = [{chapter_id, number, title, has_content}]。"""
+    from ..deps import get_deps
+    resolver=get_deps().index_resolver
+    mapping=await resolver(user_id,book_id,None) if resolver else None
+    physical={v:k for k,v in mapping.items()} if mapping is not None else {}
     result = []
     for ch in chapters:
-        cid = ch["chapter_id"]
+        cid = physical.get(ch["chapter_id"],ch["chapter_id"])
         if _milvus.available or _milvus.connect():
             chunk_count = _milvus.count_chunks(user_id, book_id, cid)
             ent_count = (_neo4j.entity_count(user_id, book_id, cid)
@@ -229,3 +251,9 @@ async def get_status(user_id: int, book_id: int, chapters: list[dict]) -> dict:
     total_chunks = sum(c["chunk_count"] for c in result)
     total_entities = sum(c["entity_count"] for c in result)
     return {"chapters": result, "total_chunks": total_chunks, "total_entities": total_entities}
+
+async def delete_generation(user_id,namespace,physical_id):
+    """Idempotent physical cleanup; host has checked no active generation references it."""
+    await asyncio.to_thread(_milvus.delete_chapter_strict,user_id,namespace,physical_id)
+    await asyncio.to_thread(_neo4j.delete_chapter_strict,user_id,namespace,physical_id)
+    _mem.delete_chapter(user_id,namespace,physical_id)
