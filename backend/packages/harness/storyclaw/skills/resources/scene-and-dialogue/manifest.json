@@ -1,7 +1,7 @@
 {
   "id": "scene-and-dialogue",
-  "version": 1,
-  "description": "场景与对白打磨",
+  "version": 2,
+  "description": "增强已有场景的空间、氛围与行动可读性，或打磨对白的角色声音、交锋与潜台词；保持原有事实、信息和修改范围。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -11,5 +11,16 @@
   "reference_files": [
     "references/scene.md",
     "references/dialogue.md"
-  ]
+  ],
+  "instruction_references": {
+    "default": [
+      "references/scene.md"
+    ],
+    "scene-enhance": [
+      "references/scene.md"
+    ],
+    "dialogue-polish": [
+      "references/dialogue.md"
+    ]
+  }
 }

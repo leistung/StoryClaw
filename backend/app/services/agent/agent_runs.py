@@ -42,6 +42,8 @@ async def create(request,uid,db):
     if previous:
         if previous.fingerprint!=fingerprint:raise HTTPException(409,'请求编号已用于其他目标')
         return out(previous)
+    from app.services.agent.manuscript_references import validate_references
+    await validate_references(db,request)
     if request.entry=='command':
         from storyclaw.orchestration.capabilities import get_capability
         try:
@@ -52,7 +54,7 @@ async def create(request,uid,db):
     row=AgentRun(id=str(uuid4()),user_id=uid,request_id=request.request_id,fingerprint=fingerprint,
                  request=request.model_dump(),status='accepted',event_seq=0,credits_cost=0,reserved=0)
     db.add(row);await db.flush();await event(db,row,'run.accepted',{'status':'accepted'})
-    inline=request.entry=='command' and (cap.job_kind is not None or cap.name in ('project.status','material.read','memory.search'))
+    inline=request.entry=='command' and cap.name not in ('framework.draft','setting.draft') and (cap.job_kind is not None or cap.name in ('project.status','material.read','memory.search'))
     if inline:
         row.status='running';row.lease_until=now()+timedelta(minutes=15)
     await db.commit()
@@ -66,6 +68,17 @@ async def append(rid,uid,kind,payload):
         row=await db.scalar(select(AgentRun).where(AgentRun.id==rid,AgentRun.user_id==uid).with_for_update())
         if not row or row.status=='cancelled':raise HTTPException(409,'请求已取消或不存在')
         await event(db,row,kind,payload);await db.commit()
+
+async def revise_creation(db,uid,bid,rid,feedback,current_rid):
+    row=await db.scalar(select(AgentRun).where(AgentRun.id==rid,AgentRun.user_id==uid).with_for_update())
+    if not row or row.request.get('scope',{}).get('book_id')!=bid:raise HTTPException(404,'本作品的生成计划不存在')
+    if row.status!='waiting_author' or (row.decision or {}).get('kind')!='creation_plan':raise ValueError('此生成计划已执行或失效，请重新拟订')
+    from uuid import uuid5,NAMESPACE_URL
+    submitted=await db.scalar(select(WorkJob.id).where(WorkJob.user_id==uid,WorkJob.request_id==str(uuid5(NAMESPACE_URL,row.id+':'+row.decision['command']))))
+    if submitted:raise ValueError('此计划已经提交任务，不能再调整')
+    row.decision={**row.decision,'feedback':feedback};row.status='accepted';row.result=None;row.error=None;row.lease_until=None
+    await event(db,row,'plan.revised',{'feedback':feedback,'label':'已收到对话补充，重新拟订计划','source_run':current_rid})
+    await db.commit()
 
 async def finish(rid,status,result=None,error=None):
     async with AsyncSessionLocal() as db:
@@ -93,6 +106,9 @@ async def execute_run(rid):
                     history.extend([{'role':'user','content':prior.request.get('message','')},
                                     {'role':'assistant','content':(prior.result or {}).get('content','')}])
     try:
+        if request.references:
+            from app.services.agent.manuscript_references import validate_references
+            async with AsyncSessionLocal() as db:await validate_references(db,request)
         result=await StoryClaw(BackendStoryPorts(rid,uid,request)).run(request,history=history)
         await finish(rid,result.status,result.model_dump())
     except Exception as exc:
@@ -121,7 +137,17 @@ async def poll_once():
         # Reconcile linked jobs without asking a model to poll.
         waiting=list(await db.scalars(select(AgentRun).where(AgentRun.status=='waiting_task').limit(100).with_for_update(skip_locked=True)))
         for r in waiting:
-            job=await db.get(WorkJob,r.job_id)
+            plan_id=((r.result or {}).get('data') or {}).get('plan_id')
+            if plan_id:
+                from app.models.studio import StudioTask
+                task=await db.get(StudioTask,plan_id)
+                if task and ((r.result or {}).get('data') or {}).get('plan_status')!=task.status:
+                    r.status={'paused':'partial','failed':'failed','succeeded':'succeeded','cancelled':'cancelled'}.get(task.status,'waiting_task')
+                    r.result={'status':r.status,'content':task.error or {'succeeded':'计划已完成','waiting_author':'计划等待你审阅章纲或正文，请到对应面板核对后，在对话中提出恢复需求。'}.get(task.status,'计划按已确认范围执行中'),
+                        'data':{'plan_id':task.id,'plan_status':task.status,'phase':task.result,'spent':task.spent,'budget':task.budget}}
+                    await event(db,r,'run.status',{'status':r.status,'result':r.result})
+                continue
+            job=await db.get(WorkJob,r.job_id) if r.job_id else None
             if job and job.status in ('succeeded','failed','cancelled'):
                 r.status=job.status;r.result={**(r.result or {}),'status':job.status,
                     'content':'任务已完成，请在对应面板或任务中心核对结果。' if job.status=='succeeded' else (job.error or '任务已取消'),

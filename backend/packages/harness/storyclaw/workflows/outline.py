@@ -9,6 +9,7 @@ from typing import Any
 from storyclaw.models.calls import llm_respond
 from storyclaw.prompts.templates import SYSTEM_OUTLINE
 from storyclaw.prompts.templates import build_outline_user_prompt
+from storyclaw.skills.loader import method_instructions
 
 
 def mock_outline(meta: dict) -> dict:
@@ -48,6 +49,8 @@ async def plan_outline(state: dict[str, Any]) -> dict:
         if meta.get('planning_mode')=='serial':
             from storyclaw.workflows.serial import generate_framework
             return {'outline':await generate_framework(meta),'error':None}
+        if meta.get('creation_plan'):
+            return {'outline':await expand_fixed_outline(meta),'error':None}
         total = int(meta.get("target_chapters", 20))
         if not 1 <= total <= 500:
             raise ValueError("章数须在 1 到 500 之间")
@@ -59,14 +62,14 @@ async def plan_outline(state: dict[str, Any]) -> dict:
             previous = json.dumps(outline, ensure_ascii=False)
             prompt = build_outline_user_prompt(meta) + (
                 f"\n本次仅生成第 {first} 到 {last} 章，恰好 {last-first+1} 章，"
-                "保持全书章号，输出一个卷的 volumes JSON。每章梗概不超过50字。"
+                "保持全书章号，输出一个卷的 volumes JSON。每章梗概150到300字，包含目标、阻碍、行动、转折和接续点。"
                 "不要在本批提前结束全书；结局只放在全书最后一章。"
                 f"\n此前已确定大纲（不得重复）：{previous}"
             )
             error = None
             for attempt in range(2):
                 content, _, _, _ = await llm_respond(
-                    {"model_choice": None}, SYSTEM_OUTLINE,
+                    {"model_choice": None}, SYSTEM_OUTLINE + '\n' + method_instructions('framework-design'),
                     prompt + (f"\n上次校验失败：{error}。重新输出本批完整严格JSON。" if error else ""),
                 )
                 content = content.strip()
@@ -98,6 +101,35 @@ async def generate_outline(meta):
     outline=result.get('outline') or {}
     if not outline:raise ValueError('未返回大纲')
     return outline,None
+
+
+async def expand_fixed_outline(meta):
+    import json
+    from storyclaw.workflows.serial import expand_framework
+    from storyclaw.models.calls import strip_code_fence
+    from storyclaw.runtime.progress import progress
+    total=int(meta.get('target_chapters') or 20)
+    if not 1<=total<=500:raise ValueError('章数须在1到500之间')
+    outline=await expand_framework(meta)
+    count=len(outline['volumes'])
+    if count>total:raise ValueError('计划卷数超过章节数，请减少卷数后确认')
+    first=1
+    for vi,volume in enumerate(outline['volumes']):
+        end=first+total//count+(1 if vi<total%count else 0)-1
+        for start in range(first,end+1,5):
+            last=min(start+4,end)
+            await progress('step.started','outline.chapters',label=f'展开{volume["name"]}第{start}–{last}章')
+            raw,*_=await llm_respond({'model_choice':{'kind':'business'},'response_format':{'type':'json_object'},'response_max_tokens':8192},SYSTEM_OUTLINE+'\n'+method_instructions('plot-design'),
+                json.dumps({'book':{k:v for k,v in meta.items() if k!='creation_plan'},'framework':outline,
+                    'task':f'仅生成第{start}到{last}章，属于{volume["name"]}，遵守该卷goal和相邻卷衔接。每章summary写150到300字，包含目标、阻碍、行动、转折和结果。保持全书连续章号，不重演此前事件，只有第{total}章可收束全书。输出 {{"chapters":[{{"number":1,"title":"标题","summary":"详细章纲"}}]}}'},ensure_ascii=False))
+            chapters=json.loads(strip_code_fence(raw)).get('chapters',[])
+            if [c.get('number') for c in chapters]!=list(range(start,last+1)) or any(len(c.get('summary',''))<100 for c in chapters):
+                raise ValueError(f'第{start}–{last}章数量或详细程度不符合计划，未采用完整大纲')
+            volume['chapters'].extend(chapters)
+            await progress('step.completed','outline.chapters',label=f'第{start}–{last}章已展开')
+        first=end+1
+    validate_outline(outline,total)
+    return outline
 
 
 def validate_confirmation(content):

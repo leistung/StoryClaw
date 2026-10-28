@@ -1,7 +1,7 @@
 {
   "id": "continuity-review",
-  "version": 1,
-  "description": "来源化一致性审阅",
+  "version": 2,
+  "description": "对照正文、确认设定和来源证据审查人物、时间、物品、规则、知情、伏笔及重复事件，给出可核对的问题与最小修复方案。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -11,6 +11,17 @@
   ],
   "reference_files": [
     "references/knowledge.md",
-    "references/repetition.md"
-  ]
+    "references/repetition.md",
+    "references/consistency-rules.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/knowledge.md",
+      "references/repetition.md"
+    ],
+    "consistency-check": [
+      "references/knowledge.md",
+      "references/consistency-rules.md"
+    ]
+  }
 }

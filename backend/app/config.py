@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,20 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080
     workers_enabled: bool = True
+    # Shared SQL admission limits, not a supplier-account rate limiter.
+    worker_job_concurrency: str = 'auto'
+    # 0 means no extra cluster-wide cap beyond each executor's local capacity.
+    worker_global_job_concurrency: int = Field(default=0, ge=0)
+    worker_user_concurrency: int = Field(default=1, ge=1, le=3)
+    worker_poll_seconds: float = Field(default=0.5, ge=0.05, le=30)
+    @field_validator('worker_job_concurrency', mode='before')
+    @classmethod
+    def validate_job_concurrency(cls, value):
+        value = str(value).strip().lower()
+        if value != 'auto' and (not value.isdecimal() or int(value) < 1):
+            raise ValueError('WORKER_JOB_CONCURRENCY must be auto or a positive integer')
+        return value
+
     source_storage_backend: str = "database"
     source_s3_endpoint: str = "http://minio:9000"
     source_s3_bucket: str = "storyclaw-private"

@@ -1,7 +1,7 @@
 {
   "id": "world-design",
-  "version": 1,
-  "description": "世界规则设计",
+  "version": 2,
+  "description": "为小说构建能约束人物行动的世界、时代、组织、场景与资源规则，支持现实与幻想题材；重点解释规则怎样进入情节。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -9,5 +9,10 @@
   ],
   "reference_files": [
     "references/rules.md"
-  ]
+  ],
+  "instruction_references": {
+    "default": [
+      "references/rules.md"
+    ]
+  }
 }

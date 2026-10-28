@@ -1,7 +1,7 @@
 {
   "id": "chapter-craft",
-  "version": 1,
-  "description": "章节写作与修订",
+  "version": 2,
+  "description": "把已确认章纲与场景任务写成完整章节，或按作者要求修订已有章节；保持事件连续、人物声音、视角与具体行动。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -11,5 +11,16 @@
   "reference_files": [
     "references/write.md",
     "references/revise.md"
-  ]
+  ],
+  "instruction_references": {
+    "default": [
+      "references/write.md"
+    ],
+    "write-chapter": [
+      "references/write.md"
+    ],
+    "modify-chapter": [
+      "references/revise.md"
+    ]
+  }
 }

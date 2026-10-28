@@ -7,6 +7,10 @@ async def pulse(tasks):
         if any(task.done() for task in tasks):raise RuntimeError('A durable consumer stopped unexpectedly')
         HEARTBEAT.write_text(str(time.time()));await asyncio.sleep(10)
 async def run():
+    # Size the worker pool before importing the application/database. Generation
+    # transactions, usage settlement and lease renewal need independent connections.
+    import os
+    os.environ['STORYCLAW_PROCESS_ROLE']='worker'
     from app.main import app
     from app.main import lifespan
     from app.config import settings

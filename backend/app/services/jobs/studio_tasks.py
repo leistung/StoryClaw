@@ -155,8 +155,17 @@ async def poll_once(task_id=None):
         task=await db.scalar(query.order_by(StudioTask.created_at).with_for_update(skip_locked=True).limit(1))
         if not task:await db.commit();return False
         task.status='running';task.lease_until=now()+timedelta(minutes=5);tid=task.id;kind=task.kind;await db.commit()
+    from storyclaw.runtime.deps import get_stream_sink,set_stream_sink
+    from app.services.agent.job_progress import emit_plan
+    previous_sink=get_stream_sink()
+    async def sink(event,payload):await emit_plan(tid,event,payload)
+    sink.drafts_enabled=False
+    set_stream_sink(sink)
     try:
-        if kind=='source-analysis':await analyze_step(tid)
+        if kind=='source-analysis':
+            await sink('step.started',{'name':'source.analysis','label':'读取并分析来源章节片段'})
+            await analyze_step(tid)
+            await sink('step.completed',{'name':'source.analysis','label':'当前来源片段已处理'})
         else:await serial_step(tid)
     except asyncio.CancelledError:raise
     except Exception as exc:
@@ -164,6 +173,7 @@ async def poll_once(task_id=None):
         async with AsyncSessionLocal() as db:
             task=await db.get(StudioTask,tid);task.status='paused';task.error=str(exc.detail) if isinstance(exc,HTTPException) else '当前步骤失败，请核对上游配置与执行记录后恢复';await db.commit()
     finally:
+        set_stream_sink(previous_sink)
         async with AsyncSessionLocal() as db:
             task=await db.get(StudioTask,tid)
             if task:

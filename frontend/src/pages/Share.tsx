@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import api, { extractError } from '@/lib/api'
+import api, { extractError } from '@/lib/http'
 import type { ShareData } from '@/types'
 import { Card, CardContent } from '@/components/ui/card'
 

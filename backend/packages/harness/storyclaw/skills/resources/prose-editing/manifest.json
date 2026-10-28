@@ -1,7 +1,7 @@
 {
   "id": "prose-editing",
-  "version": 1,
-  "description": "局部编辑",
+  "version": 2,
+  "description": "对绑定选区进行润色、扩缩写，或在指定光标位置续写新片段；保留上下文、人物声音与事实，只交付可替换或插入的候选正文。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -10,6 +10,21 @@
   ],
   "reference_files": [
     "references/polish.md",
-    "references/continue.md"
-  ]
+    "references/continue.md",
+    "references/polish-checklist.md",
+    "references/continuation-techniques.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/polish.md"
+    ],
+    "polish-chapter": [
+      "references/polish.md",
+      "references/polish-checklist.md"
+    ],
+    "continue-writing": [
+      "references/continue.md",
+      "references/continuation-techniques.md"
+    ]
+  }
 }

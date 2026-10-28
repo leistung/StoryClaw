@@ -38,30 +38,8 @@ class Control(BaseModel):
     budget:int|None=Field(default=None,ge=1,le=1000000)
 @router.post('/plans/{tid}/control')
 async def control(tid:str,data:Control,u:User=Depends(get_current_user),db=Depends(get_db)):
-    t=await db.scalar(select(StudioTask).where(StudioTask.id==tid,StudioTask.user_id==u.id).with_for_update())
-    if not t:raise HTTPException(404,'计划不存在')
-    if t.status in ('succeeded','cancelled'):raise HTTPException(409,'计划已结束')
-    if data.budget is not None:
-        if data.budget<t.spent:raise HTTPException(422,'预算不能低于已用积分')
-        t.budget=data.budget
-    if data.action=='resume':
-        if t.status in ('running','queued'):return task_out(t)
-        other=await db.scalar(select(StudioTask.id).where(StudioTask.book_id==t.book_id,StudioTask.id!=tid,StudioTask.status.in_(['running','queued'])))
-        if other:raise HTTPException(409,'本书已有运行计划')
-        if t.current_job:
-            from app.models.product import WorkJob
-            job=await db.get(WorkJob,t.current_job)
-            if job and job.status in ('failed','cancelled'):
-                t.current_job=None;t.result={**t.result,'attempt':t.result.get('attempt',0)+1}
-        t.status='queued';t.error=None;t.lease_until=None
-    else:
-        t.status='cancelled' if data.action=='cancel' else 'paused'
-        # Running inference is allowed to finish; no new call can reserve against this plan.
-        if t.current_job:
-            from app.models.product import WorkJob
-            job=await db.get(WorkJob,t.current_job)
-            if job and job.status=='queued':job.status='cancelled';job.error='所属计划已暂停';t.current_job=None;t.result={**t.result,'attempt':t.result.get('attempt',0)+1}
-    await db.commit();return task_out(t)
+    from app.services.jobs.studio_controls import control_plan
+    return await control_plan(tid, data.action, data.budget, u.id, db)
 @router.post('/sources/{sid}/chapters/{number}/retry')
 async def retry(sid:str,number:int,u:User=Depends(get_current_user),db=Depends(get_db)):
     await own_source(db,u.id,sid)

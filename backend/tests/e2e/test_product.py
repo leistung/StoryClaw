@@ -91,9 +91,12 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    await request('POST',f'/books/{bid}/config/world',{'name':'力量代价','category':'规则','description':'手工设定不可覆盖'})
    design_body={'book_id':bid,'kind':'story-design','design_type':'world','request_id':str(uuid4())}
    design_job=await request('POST','/jobs',design_body)
-   model_design=AsyncMock(return_value=('共识',1,1,'platform-test'))
-   model_design.return_value=('{'+'"summary":"世界观设计草案，等待作者核对。","dossiers":[{"name":"力量代价","category":"规则","description":"模型不能覆盖已经确认的手工力量代价规则。"},{"name":"窑城制度","category":"社会","description":"窑工按工分分享窑场收益，家族契约影响资源分配。"}]}',1,1,'platform-test')
-   with patch('storyclaw.workflows.design.llm_respond',model_design),patch('app.services.writing.creative_jobs.compute_cost',return_value=1):
+   from storyclaw.workflows.design import DesignDraft
+   model_design=AsyncMock()
+   raw_design=('{'+'"summary":"世界观设计草案，等待作者核对。","dossiers":[{"name":"力量代价","category":"规则","description":"模型不能覆盖已经确认的手工力量代价规则。"},{"name":"窑城制度","category":"社会","description":"窑工按工分分享窑场收益，家族契约影响资源分配。"}]}',1,1,'platform-test')
+   import json
+   model_design.return_value=(DesignDraft.model_validate(json.loads(raw_design[0])),1,1,'platform-test')
+   with patch('app.services.writing.creative_jobs.generate_design',model_design),patch('app.services.writing.creative_jobs.compute_cost',return_value=1):
     await run_job(design_job['id'])
    self.assertEqual((await request('GET',f'/books/{bid}/config/world'))['total'],1)
    await request('POST',f'/jobs/{design_job["id"]}/adopt',headers=reader,expect=404)
@@ -105,7 +108,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(next(r for r in cards if r['name']=='力量代价')['description'],'手工设定不可覆盖')
    # AI changes are versioned and charged in the same transaction, without a paid model.
    agent=AsyncMock(return_value={'draft_content':'来自模型的新稿。','token_usage':{'model_id':'platform-test','in_tokens':1,'out_tokens':1}})
-   with patch('app.services.writing.chat_workflow.chapters.run_agent',agent),patch('app.services.writing.chat_workflow.chapters._build_input',AsyncMock(return_value={})),patch('app.services.writing.setting_sync.launch'):
+   with patch('app.services.writing.chat_workflow.chapters.run_agent',agent),patch('app.services.writing.chat_workflow.chapters._build_input',AsyncMock(return_value={})):
     await request('POST',f'/chapters/{cid}/generate',{})
    self.assertTrue(any(r['source']=='ai' for r in await request('GET',f'/chapters/{cid}/revisions')))
    before=(await request('GET',f'/chapters/{cid}'))['content']
@@ -114,7 +117,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
     await request('POST',f'/chapters/{cid}/generate',{},expect=402)
    self.assertEqual((await request('GET',f'/chapters/{cid}'))['content'],before)
    with patch('app.services.writing.writing_workflow.batch.run_agent',agent),patch('app.services.writing.writing_workflow.batch.build_write_context',AsyncMock(return_value={})),patch('app.services.writing.writing_workflow.batch.debit',AsyncMock(side_effect=HTTPException(402,'积分不足'))):
-    batch=await request('POST',f'/books/{bid}/multi-write',{'start_number':1,'end_number':1,'skip_existing':False,'sync_settings':False})
+    batch=await request('POST',f'/books/{bid}/multi-write',{'start_number':1,'end_number':1,'skip_existing':False})
    self.assertEqual(batch['chapters'][0]['status'],'error')
    self.assertEqual(batch['total_credits_cost'],0)
    self.assertEqual((await request('GET',f'/chapters/{cid}'))['content'],before)
@@ -123,7 +126,7 @@ class ProductIntegration(unittest.IsolatedAsyncioTestCase):
    entered=asyncio.Event();release=asyncio.Event()
    async def slow_agent(*args):
     entered.set();await release.wait();return {'draft_content':'迟到的生成稿','token_usage':{}}
-   with patch('app.services.writing.chat_workflow.chapters.run_agent',slow_agent),patch('app.services.writing.chat_workflow.chapters._build_input',AsyncMock(return_value={})),patch('app.services.writing.setting_sync.launch'):
+   with patch('app.services.writing.chat_workflow.chapters.run_agent',slow_agent),patch('app.services.writing.chat_workflow.chapters._build_input',AsyncMock(return_value={})):
     late=asyncio.create_task(client.post(f'/api/v1/chapters/{cid}/generate',headers=owner,json={}))
     await asyncio.wait_for(entered.wait(),5)
     await request('PUT',f'/chapters/{cid}',{'content':'并发编辑的新正文。'})

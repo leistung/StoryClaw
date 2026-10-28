@@ -1,14 +1,10 @@
-import PostEngagement from '@/components/PostEngagement'
+import PostEngagement from '@/features/community/components/PostEngagement'
 import { useState, MouseEvent, FormEvent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth'
-import {
-  getPost,
-  updatePost,
-  deletePost,
-  extractError,
-} from '@/lib/api'
+import { getPost, updatePost, deletePost } from '@/features/community/api'
+import { extractError } from '@/lib/http'
 import type { Post, PostInput } from '@/types'
 import {
   ArrowLeft,
@@ -18,7 +14,6 @@ import {
   Edit,
   Trash,
   ChevronRight,
-  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

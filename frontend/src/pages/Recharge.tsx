@@ -2,7 +2,7 @@ import {useState} from 'react'
 import {useQuery,useMutation,useQueryClient} from '@tanstack/react-query'
 import {CreditCard,Check,ArrowUpRight,Clock3,Coins} from 'lucide-react'
 import {toast} from 'sonner'
-import api,{extractError} from '@/lib/api'
+import api, { extractError } from '@/lib/http'
 import {useAuthStore} from '@/stores/auth'
 import {Button} from '@/components/ui/button'
 interface Package{id:string;name:string;price_cny:number;bonus_credits:number;duration_days:number;enabled:boolean}

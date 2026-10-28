@@ -10,6 +10,8 @@ async def stage(db,chapter,body_hash):
     row=IndexManifest(chapter_id=chapter.id,body_hash=body_hash,physical_id=-(randbits(46)+1),status='staging',result={})
     db.add(row);await db.commit();return row
 async def activate(db,row,chapter,result,body_hash):
+    from app.services.writing.revisions import assert_job_lease
+    await assert_job_lease(db,lock=True)
     from app.services.writing.revisions import chapter_hash
     from sqlalchemy import text
     await db.execute(text('SELECT pg_advisory_xact_lock(CAST(:key AS BIGINT))'),{'key':916000000000+chapter.book_id})

@@ -36,11 +36,12 @@ async def _call_langgraph(meta: dict) -> tuple[dict, str | None]:
     except ValueError as exc:raise HTTPException(502,str(exc)) from exc
 
 
-async def generate_outline(bid: int, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), mode:Literal['serial','fixed']='fixed'):
+async def generate_outline(bid: int, u: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), mode:Literal['serial','fixed']='fixed',creation_plan:dict|None=None):
     b = await _get_owned_book(bid, u, db)
     await assert_planning_editable(db,bid)
     meta = {
         "planning_mode":mode,
+        "creation_plan":creation_plan,
         "title": b.title, "intro": b.intro or "", "genre": b.genre,
         "protagonist_name": b.protagonist_name or "", "protagonist_intro": b.protagonist_intro or "",
         "target_chapters": b.target_chapters, "target_words": b.target_words,

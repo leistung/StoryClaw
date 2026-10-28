@@ -1,7 +1,7 @@
 {
   "id": "character-arc",
-  "version": 1,
-  "description": "人物塑造",
+  "version": 2,
+  "description": "生成人物档案、动机关系与成长或堕落弧线，解释人物为何这样选择、怎样付出代价；也用于审查人设变化是否有铺垫。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -9,6 +9,13 @@
     "book.analyze"
   ],
   "reference_files": [
-    "references/motivation.md"
-  ]
+    "references/motivation.md",
+    "references/character-arc-template.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/motivation.md",
+      "references/character-arc-template.md"
+    ]
+  }
 }

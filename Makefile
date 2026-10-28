@@ -59,7 +59,7 @@ test-integration:
 	$(PYTHON) backend/scripts/test.py --suite all
 
 test-frontend:
-	cd frontend && npm test
+	cd frontend && npm run typecheck && npm test
 
 docs-check:
 	$(PYTHON) backend/scripts/check_docs.py

@@ -1,13 +1,20 @@
 {
   "id": "framework-design",
-  "version": 1,
-  "description": "故事结构设计",
+  "version": 2,
+  "description": "设计或重构小说总纲、分卷和连载阶段，把作者的题材承诺转化为有因果、代价与阶段变化的故事结构；不用于直接写正文。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
     "framework.draft"
   ],
   "reference_files": [
-    "references/serial.md"
-  ]
+    "references/serial.md",
+    "references/outline-template.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/serial.md",
+      "references/outline-template.md"
+    ]
+  }
 }

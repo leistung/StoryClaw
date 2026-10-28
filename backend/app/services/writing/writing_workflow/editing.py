@@ -103,10 +103,18 @@ async def continue_writing(
     ctx = await build_write_context(u.id, c.book_id, cid, db)
 
     ctx["fragment_max_words"] = data.max_words
+    ctx['author_instruction']=data.instruction
+    if data.cursor_offset is not None:
+        from storyclaw.workflows.continuity import prose
+        full=prose(c.content)
+        if data.cursor_offset>len(full):raise HTTPException(409,'续写位置超出本章正文范围')
+        prefix=full[:data.cursor_offset]
+        ctx['cursor_offset']=data.cursor_offset
+        ctx['continuation_suffix']=full[data.cursor_offset:]
     input_state = {
         "user_id": u.id, "book_id": c.book_id, "chapter_id": cid,
         "thread_id": thread_id,
-        "messages": [{"role": "user", "content": "请基于上文续写片段"}],
+        "messages": [{"role": "user", "content": data.instruction or "请基于上文续写片段"}],
         "model_choice": mc, "user_memory": user_mem, "context": ctx,
         "intent": "continue",
         "prefix_text": prefix,

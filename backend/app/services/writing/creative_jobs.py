@@ -9,11 +9,11 @@ from app.models import CreditsLedger
 from app.services.platform.credits import debit
 from app.services.platform.pricing import compute_cost
 
-async def design_draft(db,user,bid,kind):
+async def design_draft(db,user,bid,kind,creation_plan=None):
     book=await db.get(Book,bid)
     row=await db.scalar(select(Outline).where(Outline.book_id==bid))
     existing=list(await db.scalars(select(ConfigEntity).where(ConfigEntity.book_id==bid).order_by(ConfigEntity.sort_order,ConfigEntity.id).limit(80)))
-    draft,ins,outs,model=await generate_design(kind,{k:getattr(book,k) for k in ('title','intro','genre','protagonist_name','protagonist_intro')},json.loads(row.content),[{k:getattr(r,k) for k in ('entity_type','name','description')} for r in existing],{'kind':'business'})
+    draft,ins,outs,model=await generate_design(kind,{k:getattr(book,k) for k in ('title','intro','genre','protagonist_name','protagonist_intro')},json.loads(row.content),[{k:getattr(r,k) for k in ('entity_type','name','description')} for r in existing],{'kind':'business'},creation_plan)
     cost=compute_cost(model,ins,outs)
     await debit(db,user,cost)
     db.add(CreditsLedger(user_id=user.id,delta=-cost,reason='story-design',model=model,in_tokens=ins,out_tokens=outs))

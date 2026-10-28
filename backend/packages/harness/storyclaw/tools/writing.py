@@ -138,10 +138,14 @@ async def tool_loop(state: dict[str, Any], sys_prompt: str, user_msg: str) -> st
             name = tc.get("name", "")
             args = tc.get("args") or {}
             tid = tc.get("id", "")
+            from storyclaw.runtime.progress import progress, preview
+            await progress('tool.started',name,call_id=tid,arguments=args)
             try:
                 out = await executor(name, args, user_id, book_id, chapter_id)
+                await progress('tool.completed',name,call_id=tid,result=preview(out))
             except Exception as e:  # noqa: BLE001
                 out = f"工具 {name} 执行失败: {e}"
+                await progress('tool.failed',name,call_id=tid,error=str(e)[:600])
             conv.append(ToolMessage(content=out, tool_call_id=tid))
             results.append(f"### 工具 {name}({args})\n{out}")
             log.info("writer tool call name=%s args=%s", name, args)

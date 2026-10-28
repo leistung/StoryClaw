@@ -1,13 +1,20 @@
 {
   "id": "story-summarization",
-  "version": 1,
-  "description": "故事摘要与事实提炼",
+  "version": 2,
+  "description": "按指定正文范围生成前情提要、阶段摘要和来源化事实记录，保留因果、人物状态与未解问题，供读者回顾或后续创作使用。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
     "book.analyze"
   ],
   "reference_files": [
-    "references/evidence.md"
-  ]
+    "references/evidence.md",
+    "references/summary-format.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/evidence.md",
+      "references/summary-format.md"
+    ]
+  }
 }

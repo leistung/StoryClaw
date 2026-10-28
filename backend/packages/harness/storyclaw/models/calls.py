@@ -34,11 +34,23 @@ async def llm_respond(state: dict[str, Any], system_prompt: str, user_message: s
     if state.get("response_format"):
         llm = llm.bind(response_format=state["response_format"])
     conv = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
-    resp = await llm.ainvoke(conv)
+    from storyclaw.runtime.progress import progress
+    from uuid import uuid4
+    import time
+    call_id=str(uuid4());started=time.monotonic()
+    await progress('step.started','model.call',call_id=call_id,label='请求创作模型',model=model_id,
+                   input_chars=len(system_prompt)+len(user_message),max_tokens=state.get('response_max_tokens',8192))
+    try:
+        resp = await llm.ainvoke(conv)
+    except Exception as exc:
+        await progress('step.failed','model.call',call_id=call_id,error=str(exc)[:600])
+        raise
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage = getattr(resp, "usage_metadata", None) or {}
     in_t = int(usage.get("input_tokens", 0) or 0)
     out_t = int(usage.get("output_tokens", 0) or 0)
+    await progress('step.completed','model.call',call_id=call_id,model=model_id,input_tokens=in_t,output_tokens=out_t,
+                   output_chars=len(content),duration_ms=round((time.monotonic()-started)*1000))
     return content, in_t, out_t, (getattr(resp, "response_metadata", {}) or {}).get("storyclaw_model_id", model_id)
 
 

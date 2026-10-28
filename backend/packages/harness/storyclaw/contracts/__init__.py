@@ -11,6 +11,18 @@ class ExecutionContext(BaseModel):
     model_config = ConfigDict(frozen=True)
     actor_id: int = Field(gt=0)
 
+class ManuscriptReference(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    kind:Literal['selection','cursor','chapter']
+    chapter_id:int=Field(gt=0)
+    title:str=Field(max_length=300)
+    line_start:int=Field(ge=1)
+    line_end:int=Field(ge=1)
+    text:str=Field(default='',max_length=12000)
+    offset:int=Field(default=0,ge=0)
+    affinity:Literal['before','after']='after'
+    expected_hash:str=Field(pattern=r'^[a-f0-9]{64}$')
+
 class AgentRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     request_id: str = Field(min_length=16, max_length=64, pattern=r'^[A-Za-z0-9-]+$')
@@ -19,6 +31,7 @@ class AgentRequest(BaseModel):
     command: str | None = None
     payload: dict[str,Any] = Field(default_factory=dict)
     scope: Scope = Field(default_factory=Scope)
+    references:list[ManuscriptReference]=Field(default_factory=list,max_length=4)
     conversation_id: str | None = Field(default=None,max_length=64,pattern=r'^[A-Za-z0-9-]+$')
 
 class ToolCall(BaseModel):

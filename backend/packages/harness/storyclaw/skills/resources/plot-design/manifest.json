@@ -1,7 +1,7 @@
 {
   "id": "plot-design",
-  "version": 1,
-  "description": "情节与场景设计",
+  "version": 2,
+  "description": "设计当前章纲、场景任务单、主支线推进与伏笔回收，让事件由人物行动和后果连接；也用于诊断重复情节和推进停滞。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -10,6 +10,13 @@
     "book.analyze"
   ],
   "reference_files": [
-    "references/chapter.md"
-  ]
+    "references/chapter.md",
+    "references/plot-beats-reference.md"
+  ],
+  "instruction_references": {
+    "default": [
+      "references/chapter.md",
+      "references/plot-beats-reference.md"
+    ]
+  }
 }

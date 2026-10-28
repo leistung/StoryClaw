@@ -1,35 +1,36 @@
-import StudioManager from '@/components/StudioManager'
-import StoryAssistant from '@/components/StoryAssistant'
+import StudioManager from '@/features/workspace/components/StudioManager'
+import StoryAssistant from '@/features/assistant/components/StoryAssistant'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import ChapterPlanning from '@/components/ChapterPlanning'
-import CreationGuide from '@/components/CreationGuide'
-import JobCenter from '@/components/JobCenter'
-import ChapterVersions from '@/components/ChapterVersions'
-import { enqueueJob, type WorkJob } from '@/lib/jobs'
+import ChapterPlanning from '@/features/workspace/components/ChapterPlanning'
+import CreationGuide from '@/features/workspace/components/CreationGuide'
+import JobCenter from '@/features/jobs/components/JobCenter'
+import ChapterVersions from '@/features/workspace/components/ChapterVersions'
+import {prepareJobPrompt} from '@/features/assistant/prompts'
+import {type WorkJob} from '@/features/jobs/types'
+import {stageAssistantPrompt,compactText,manuscriptPlainText,type ManuscriptReference} from '@/features/assistant/draft-store'
 import { toEditorContent } from '@/lib/editor-content'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import api, { extractError, polishChapter, continueWriting } from '@/lib/api'
+import api, { extractError } from '@/lib/http'
 import { useAuthStore } from '@/stores/auth'
-import type { Book, Chapter, ChapterDetail, Volume, LLMConfig } from '@/types'
+import type { Book, Chapter, ChapterDetail, Volume } from '@/types'
 import {
-  X, Plus, Save, Home as HomeIcon, Bold, Italic, Heading1, Heading2,
-  Highlighter, List, Send, RotateCcw, PenLine, Wand2, CornerDownRight, Sparkles, History, Feather, Focus, PanelLeft, Download, ChevronRight, BookOpen, Users, MapPin, Package, GitBranch, FileText, Network, Settings, Library,
+  X, Plus, Save, Bold, Italic, Heading1, Heading2,
+  Highlighter, List, RotateCcw, PenLine, Wand2, CornerDownRight, History, Feather, Focus, PanelLeft, Download, ChevronRight, BookOpen, Users, MapPin, Package, GitBranch, FileText, Network, Settings, Library,
 } from 'lucide-react'
-import OutlinePanel from '@/components/OutlinePanel'
-import DatabasePanel from '@/components/DatabasePanel'
-import ConfigPage from '@/components/ConfigPage'
-import ReaderPage from '@/components/ReaderPage'
-import BookInfoPage from '@/components/BookInfoPage'
-import WorkspaceSettings from '@/components/WorkspaceSettings'
+import OutlinePanel from '@/features/workspace/components/OutlinePanel'
+import DatabasePanel from '@/features/workspace/components/DatabasePanel'
+import ConfigPage from '@/features/workspace/components/ConfigPage'
+import ReaderPage from '@/features/reading/components/ReaderPage'
+import BookInfoPage from '@/features/workspace/components/BookInfoPage'
+import WorkspaceSettings from '@/features/workspace/components/WorkspaceSettings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 
 const TABS = ['创作', '大纲', '世界观', '角色', '场景', '物品', '情节', '数据库', '任务', '阅读', '书籍信息', '创作管理', '设置'] as const
 const ENABLED_TABS: ReadonlySet<string> = new Set(['创作', '阅读', '世界观', '角色', '场景', '物品', '情节', '大纲', '数据库', '书籍信息', '创作管理', '设置', '任务', '创作管理'])
@@ -42,12 +43,12 @@ export default function Workspace() {
   const qc = useQueryClient()
   const user = useAuthStore((s) => s.user)
   const fetchMe = useAuthStore((s) => s.fetchMe)
-  const isBusiness = true
   const [searchParams,setSearchParams] = useSearchParams()
   const [activeTab, setActiveTabState] = useState<typeof TABS[number]>(() => TABS.find(t=>t===searchParams.get('tab')) || '创作')
   const setActiveTab=(tab:typeof TABS[number])=>{setActiveTabState(tab);setSearchParams({tab},{replace:true})}
   useEffect(()=>{const tab=TABS.find(t=>t===searchParams.get('tab'));if(tab)setActiveTabState(tab)},[searchParams])
   const [focusMode, setFocusMode] = useState(() => window.innerWidth < 800)
+  useEffect(()=>{const show=(event:Event)=>{if((event as CustomEvent).detail?.bookId===bid)setFocusMode(false)};window.addEventListener('storyclaw:show-assistant',show);return()=>window.removeEventListener('storyclaw:show-assistant',show)},[bid])
   const [compact, setCompact] = useState(() => window.innerWidth < 800)
   const [exporting, setExporting] = useState(false)
   const [hideRouteGuide,setHideRouteGuide]=useState(()=>localStorage.getItem('sc-hide-route-guide')==='1')
@@ -63,8 +64,6 @@ export default function Workspace() {
   const [showVersions, setShowVersions] = useState(false)
   const finishedJobs = useRef(new Set<string>())
   const {data: workJobs=[]}=useQuery({queryKey:['jobs',bid],queryFn:async()=>(await api.get<WorkJob[]>('/jobs',{params:{book_id:bid}})).data,enabled:!!bid,refetchInterval:3000})
-  const {data:planningOutline}=useQuery({queryKey:['outline',bid],enabled:!!bid,queryFn:async()=>{try{return (await api.get(`/books/${bid}/outline`)).data}catch(e){if((e as {response?:{status:number}}).response?.status===404)return null;throw e}},refetchInterval:5000})
-  const outlineReady=!!planningOutline?.content?._review
   const {data:workflow}=useQuery({queryKey:['workflow',bid],enabled:!!bid,queryFn:async()=>(await api.get<{impacts:{chapter_id:number;reason:string}[]}>(`/books/${bid}/workflow`)).data,refetchInterval:5000})
   const chapterBusy=workJobs.some(j=>j.chapter_id===selectedChapterId && ['queued','running'].includes(j.status))
 
@@ -94,8 +93,6 @@ export default function Workspace() {
   const llmReady = modelStatus?.chat ?? false
   const embeddingReady = modelStatus?.embedding ?? false
   // 模型由平台中台统一维护，用户无需配置密钥。
-  const requireLlm = () => true
-  const requireEmbedding = () => true
 
   const { data: chapterDetail } = useQuery({
     queryKey: ['chapter', selectedChapterId],
@@ -131,7 +128,6 @@ export default function Workspace() {
     immediatelyRender: false,
     onUpdate: ({ editor: ed }) => {
       setSaveStatus('idle')
-      if (streamingRef.current) return  // 流式生成中不自动保存
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
       saveTimer.current = window.setTimeout(() => {
         void doSave(ed.getHTML(), chapterTitle)
@@ -208,26 +204,11 @@ export default function Workspace() {
     }
   }, [chapters, selectedChapterId])
 
-  // Legacy local-edit endpoints keep their own conversation; assistant runs are separate.
-  const [threadId,setThreadId] = useState('')
-
-  // ===== 写本章：调用 write-chapter skill =====
-  const [generating, setGenerating] = useState(false)
-  const streamingRef = useRef(false)
-  const startTask = async(kind:'generate'|'scene-plan') => {
-    if(!selectedChapterId || chapterBusy || generating)return
-    if(!outlineReady){setActiveTab('大纲');toast.info('请先保存并确认大纲，再使用 AI 规划或写作');return}
-    if(kind==='generate' && (chapterDetail?.word_count ?? 0)>0 && !window.confirm('重新生成会替换本章正文，原稿将保留在版本历史中。是否继续？'))return
-    setGenerating(true)
-    try {
-      if(saveTimer.current && editor){window.clearTimeout(saveTimer.current);if(!await doSave(editor.getHTML(),chapterTitle))return}
-      await enqueueJob({book_id:bid,chapter_id:selectedChapterId,kind,prompt:`请写本章：${chapterTitle}`})
-      await qc.invalidateQueries({queryKey:['jobs',bid]})
-      toast.success('任务已排队，可以离开页面，稍后在任务中心查看结果')
-    } catch(e){toast.error(extractError(e,'任务创建失败'))}
-    finally{setGenerating(false)}
+  const startTask=(kind:'generate'|'scene-plan')=>{
+    if(!selectedChapterId)return
+    try{prepareJobPrompt({book_id:bid,chapter_id:selectedChapterId,kind})}catch(e){toast.error(extractError(e,'请先处理助手中的草稿'))}
   }
-  const generateChapter = () => startTask('generate')
+  const generateChapter=()=>startTask('generate')
   useEffect(()=>{editor?.setEditable(!chapterBusy, false)},[editor,chapterBusy])
   useEffect(()=>{
     for(const j of workJobs){
@@ -246,103 +227,40 @@ export default function Workspace() {
     }
   },[workJobs,selectedChapterId,bid,qc,fetchMe])
 
-  // ===== P1-6：润色选中 / 段内续写 / 分析 skill =====
-  const [polishing, setPolishing] = useState(false)
-  const [continuing, setContinuing] = useState(false)
-
-  /** 取编辑器选中的纯文本（无 HTML 标签） */
-  const getSelectedText = (): string => {
-    if (!editor) return ''
-    const { state } = editor
-    const { from, to, empty } = state.selection
-    if (empty) return ''
-    return state.doc.textBetween(from, to, '\n')
+  const prepareTextRequest=(kind:'selection'|'cursor')=>{
+    if(!editor||!selectedChapterId)return
+    const {from,to,empty}=editor.state.selection
+    if(kind==='selection'&&empty){toast.info('请先选中要修改的正文片段');return}
+    const position=kind==='cursor'?to:from
+    const prefix=editor.state.doc.textBetween(0,position,'\n')
+    const text=editor.state.doc.textBetween(from,to,'\n')
+    if(kind==='selection'&&text.length>6000){toast.info('单次引用最多 6000 字，请缩小选区');return}
+    const line=prefix.split('\n').length
+    const reference:ManuscriptReference={kind,chapter_id:selectedChapterId,title:chapterTitle||'当前章节',
+      affinity:editor.state.doc.resolve(position).parentOffset===0?'before':'after',line_start:line,line_end:line+text.split('\n').length-1,offset:Array.from(compactText(prefix)).length,
+      text:kind==='selection'?text:`${prefix.slice(-160)}▏${editor.state.doc.textBetween(to,editor.state.doc.content.size,'\n').slice(0,160)}`,
+      expected_hash:baseHash.current,snapshot:editor.getHTML()}
+    try{stageAssistantPrompt(bid,kind==='selection'?'请润色引用的选中片段，保持事实、人物语气和原意，提升表达与画面感。结合本章完整正文理解上下文，返回可对照采用的修改候选。':'请先阅读本章完整正文、章纲和前文记忆，在引用的光标位置续写约 600 字，与后文自然衔接，避免重复已写事件。返回可插入的续写候选。',selectedChapterId,[reference])}
+    catch(e){toast.error(extractError(e,'请先处理助手中的草稿'))}
   }
-
-  /** 取光标前的正文（纯文本，最多 1500 字） */
-  const getPrefixText = (): string => {
-    if (!editor) return ''
-    const { state } = editor
-    const from = state.selection.from
-    return state.doc.textBetween(0, from, '\n').slice(-1500)
-  }
-
-  /** 把 agent 返回的内容插入/替换到编辑器，并触发保存 */
-  const applyAgentContent = (text: string, mode: 'replace-selection' | 'append-cursor') => {
-    if (!editor) return
-    if (mode === 'replace-selection') {
-      // 替换选区
-      const { from, to, empty } = editor.state.selection
-      if (empty) {
-        editor.commands.insertContent(text)
-      } else {
-        editor.chain().focus().deleteRange({ from, to }).insertContent(text).run()
+  useEffect(()=>{const update=(event:Event)=>{const id=(event as CustomEvent).detail?.chapterId;if(id===selectedChapterId){lastSavedId.current=null;void qc.invalidateQueries({queryKey:['chapter',id]})}};window.addEventListener('storyclaw:manuscript-updated',update);return()=>window.removeEventListener('storyclaw:manuscript-updated',update)},[selectedChapterId,qc])
+  const prepareSend=async(targetChapter:number|null,references:ManuscriptReference[])=>{
+    if(targetChapter===selectedChapterId&&editor){
+      if(saveStatus==='saving')throw new Error('正文正在保存，请稍后发送；需求和引用仍保留')
+      if(saveTimer.current||saveStatus==='error'){
+        if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null}
+        if(!await doSave(editor.getHTML(),chapterTitle))throw new Error('正文保存失败，需求仍保留，请处理冲突后再发送')
       }
-    } else {
-      // 在光标处追加续写
-      editor.chain().focus().insertContent(text).run()
     }
-    // 立即保存
-    if (saveTimer.current) window.clearTimeout(saveTimer.current)
-    void doSave(editor.getHTML(), chapterTitle)
-  }
-
-  const polishSelected = async () => {
-    if (!selectedChapterId || polishing) return
-    const sel = getSelectedText()
-    if (!sel.trim()) {
-      setError('请先在编辑器中选中要润色的文本')
-      return
+    const result:ManuscriptReference[]=[]
+    for(const reference of references){
+      const current=(await api.get<ChapterDetail>(`/chapters/${reference.chapter_id}`)).data
+      if(reference.snapshot&&compactText(manuscriptPlainText(current.content))!==compactText(manuscriptPlainText(reference.snapshot)))
+        throw new Error('引用后的正文已经改变，请移除旧引用并重新选择；输入的需求已保留')
+      const {snapshot,...wire}=reference
+      result.push({...wire,expected_hash:current.content_hash})
     }
-    setPolishing(true)
-    setError('')
-    try {
-      const res = await polishChapter(selectedChapterId, {
-        selected_text: sel,
-        polish_goal: '提升文笔与画面感',
-        thread_id: threadId || undefined,
-      })
-      if (res.thread_id) setThreadId(res.thread_id)
-      applyAgentContent(res.content, 'replace-selection')
-      lastSavedId.current = null
-      qc.invalidateQueries({ queryKey: ['chapter', selectedChapterId] })
-      qc.invalidateQueries({ queryKey: ['chapters', bid] })
-      if (isBusiness) void fetchMe()
-      setError(`已润色 ${res.word_count} 字 · in ${res.in_tokens}/out ${res.out_tokens}${isBusiness ? ` · ${res.credits_cost} 积分` : ''}`)
-    } catch (e) {
-      setError(extractError(e, '润色失败'))
-    } finally {
-      setPolishing(false)
-    }
-  }
-
-  const continueAtCursor = async () => {
-    if (!selectedChapterId || continuing) return
-    const prefix = getPrefixText()
-    if (!prefix.trim()) {
-      setError('请把光标放在需要续写的段落位置')
-      return
-    }
-    setContinuing(true)
-    setError('')
-    try {
-      const res = await continueWriting(selectedChapterId, {
-        prefix_text: prefix,
-        max_words: 600,
-        thread_id: threadId || undefined,
-      })
-      if (res.thread_id) setThreadId(res.thread_id)
-      applyAgentContent(res.content, 'append-cursor')
-      lastSavedId.current = null
-      qc.invalidateQueries({ queryKey: ['chapter', selectedChapterId] })
-      qc.invalidateQueries({ queryKey: ['chapters', bid] })
-      if (isBusiness) void fetchMe()
-      setError(`续写 ${res.word_count} 字 · in ${res.in_tokens}/out ${res.out_tokens}${isBusiness ? ` · ${res.credits_cost} 积分` : ''}`)
-    } catch (e) {
-      setError(extractError(e, '续写失败'))
-    } finally {
-      setContinuing(false)
-    }
+    return result
   }
 
   if (!bid) return <div className="p-8 text-muted-foreground">无效书籍</div>
@@ -484,6 +402,8 @@ export default function Workspace() {
                   </div>
                 </div>
                 {chapterBusy && <div className="mx-6 mb-3 text-xs text-primary">该章节任务正在处理中，正文暂时只读。可在任务中心查看进度。</div>}
+            <ChapterPlanning key={selectedChapterId} bookId={bid} chapterId={selectedChapterId} jobs={workJobs} onTasks={()=>setActiveTab('任务')}/>
+            <CreationGuide key={bid} bookId={bid} book={book} chapters={chapters ?? []} jobs={workJobs} onNavigate={setActiveTab}/>
                 <div className="manuscript-toolbar px-4 py-1.5 bg-background border-b flex items-center gap-1 flex-wrap">
                   <ToolBtn disabled={chapterBusy} onClick={() => editor?.chain().focus().toggleBold().run()} active={!!editor?.isActive('bold')} title="加粗"><Bold size={16} /></ToolBtn>
                   <ToolBtn disabled={chapterBusy} onClick={() => editor?.chain().focus().toggleItalic().run()} active={!!editor?.isActive('italic')} title="斜体"><Italic size={16} /></ToolBtn>
@@ -491,32 +411,32 @@ export default function Workspace() {
                   <ToolBtn disabled={chapterBusy} onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} active={!!editor?.isActive('heading', { level: 2 })} title="二级标题"><Heading2 size={16} /></ToolBtn>
                   <ToolBtn disabled={chapterBusy} onClick={() => editor?.chain().focus().toggleHighlight().run()} active={!!editor?.isActive('highlight')} title="高亮"><Highlighter size={16} /></ToolBtn>
                   <ToolBtn disabled={chapterBusy} onClick={() => editor?.chain().focus().toggleBulletList().run()} active={!!editor?.isActive('bulletList')} title="列表"><List size={16} /></ToolBtn>
-                  <div className="w-px h-5 bg-muted mx-1" /><Button size="sm" variant="ghost" onClick={async()=>{if(saveTimer.current && editor){window.clearTimeout(saveTimer.current);if(!await doSave(editor.getHTML(),chapterTitle))return}setShowVersions(true)}}><History size={13}/>版本</Button><Button size="sm" variant="ghost" disabled={chapterBusy || generating} onClick={()=>void startTask('scene-plan')}><List size={13}/>场景规划</Button>
+                  <div className="w-px h-5 bg-muted mx-1" /><Button size="sm" variant="ghost" onClick={async()=>{if(saveTimer.current && editor){window.clearTimeout(saveTimer.current);if(!await doSave(editor.getHTML(),chapterTitle))return}setShowVersions(true)}}><History size={13}/>版本</Button><Button size="sm" variant="ghost" disabled={chapterBusy} onClick={()=>void startTask('scene-plan')}><List size={13}/>场景规划</Button>
                   <Button
                     size="sm"
                     className="writer-generate"
                     onClick={() => void generateChapter()}
-                    disabled={!selectedChapterId || generating || chapterBusy}
+                    disabled={!selectedChapterId || chapterBusy}
                     title="根据本章大纲和已有设定生成正文"
                   >
-                    <PenLine size={14} /> {generating ? '生成中…' : '写本章'}
+                    <PenLine size={14} /> 写本章需求
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => void polishSelected()}
-                    disabled={!selectedChapterId || polishing || chapterBusy}
+                    onClick={() => prepareTextRequest('selection')}
+                    disabled={!selectedChapterId || chapterBusy}
                     title="选中一段文字，优化表达与描写"
                   >
-                    <Wand2 size={14} /> {polishing ? '润色中…' : '润色选中'}
+                    <Wand2 size={14} /> 润色选中
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => void continueAtCursor()}
-                    disabled={!selectedChapterId || continuing || chapterBusy}
+                    onClick={() => prepareTextRequest('cursor')}
+                    disabled={!selectedChapterId || chapterBusy}
                     title="把光标放在段尾，接着当前内容续写"
                   >
-                    <CornerDownRight size={14} /> {continuing ? '续写中…' : '续写'}
+                    <CornerDownRight size={14} /> 续写需求
                   </Button>
                 </div>
                 <div className="manuscript-scroll flex-1 overflow-y-auto bg-background px-6 py-4 prose max-w-none">
@@ -542,11 +462,7 @@ export default function Workspace() {
 
           {/* 右：Ask 面板 */}
           <Panel defaultSize={24} minSize={20} className="writer-assistant bg-background border-l flex flex-col">
-            {activeTab==='创作'&&<>
-            <ChapterPlanning key={selectedChapterId} bookId={bid} chapterId={selectedChapterId} jobs={workJobs} onTasks={()=>setActiveTab('任务')}/>
-            <CreationGuide key={bid} bookId={bid} book={book} chapters={chapters ?? []} jobs={workJobs} onNavigate={setActiveTab}/>
-            </>}
-            <StoryAssistant key={bid} bookId={bid} chapterId={selectedChapterId} onTasks={()=>setActiveTab('任务')}/>
+            <StoryAssistant key={bid} bookId={bid} chapterId={selectedChapterId} chapterLabel={chapterDetail?`第${chapterDetail.number}章 · ${chapterTitle}`:undefined} beforeSend={prepareSend} onTasks={()=>setActiveTab('任务')}/>
           </Panel>
           </>}
         </PanelGroup>

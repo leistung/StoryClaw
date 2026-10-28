@@ -116,9 +116,6 @@ async def multi_write(
             total_in+=ti;total_out+=to;total_cost+=cost;model_id=mid or model_id
             prev_summary=content[-600:]
             items.append(MultiWriteItem(chapter_id=cid,number=num,title=result_title,word_count=wc,status='generated'))
-            if data.sync_settings:
-                from app.services.writing.setting_sync import launch
-                launch(bid,cid,uid,mc)
         except Exception as exc:
             await db.rollback()
             error=str(exc.detail) if isinstance(exc,HTTPException) else '本章生成失败，请核对内容后重试'

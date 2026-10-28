@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import api, { TOKEN_KEY } from '@/lib/api'
+import api, { TOKEN_KEY } from '@/lib/http'
 import type { User } from '@/types'
 
 interface AuthState {

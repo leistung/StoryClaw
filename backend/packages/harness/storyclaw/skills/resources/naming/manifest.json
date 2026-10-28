@@ -1,7 +1,7 @@
 {
   "id": "naming",
-  "version": 1,
-  "description": "命名建议",
+  "version": 2,
+  "description": "为书籍、卷、章、人物、地点或组织生成贴合内容、时代与声音的命名候选，说明差异并检查现有范围内的混淆和剧透。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -9,5 +9,10 @@
   ],
   "reference_files": [
     "references/candidates.md"
-  ]
+  ],
+  "instruction_references": {
+    "default": [
+      "references/candidates.md"
+    ]
+  }
 }

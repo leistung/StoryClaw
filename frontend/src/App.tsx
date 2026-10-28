@@ -15,7 +15,7 @@ const PostDetail = lazy(() => import('@/pages/PostDetail'))
 const ReadBook = lazy(() => import('@/pages/ReadBook'))
 const Help = lazy(() => import('@/pages/Help'))
 const Recharge = lazy(() => import('@/pages/Recharge'))
-const Jobs = lazy(() => import('@/components/JobCenter'))
+const Jobs = lazy(() => import('@/features/jobs/components/JobCenter'))
 const Messages = lazy(() => import('@/pages/Messages'))
 
 function AdminRedirect() {

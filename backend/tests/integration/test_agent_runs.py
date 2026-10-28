@@ -34,16 +34,52 @@ class AgentRunsTests(unittest.IsolatedAsyncioTestCase):
    book=await call('POST','/books',{'title':'Agent集成测试','genre':'玄幻','intro':'私密的测试资料'})
    bid=book['id'];chapter=await call('POST',f'/chapters/books/{bid}',{'title':'第一章'})
    await call('PUT',f'/chapters/{chapter["id"]}',{'content':'夜雨落在窗前，灯匠收好了铜钳。'})
-   # Commands are synchronous deterministic enqueue, and use the legacy queue/policies.
+   # Planning commands draft a reviewable plan; no paid generation job before approval.
    body={'request_id':str(uuid4()),'entry':'command','command':'framework.draft','scope':{'book_id':bid},'payload':{'planning_mode':'serial'}}
    first=await call('POST','/agent/runs',body)
-   self.assertEqual(first['status'],'waiting_task');self.assertTrue(first['job_id'])
+   self.assertEqual(first['status'],'accepted');self.assertIsNone(first['job_id'])
    again=await call('POST','/agent/runs',body);self.assertEqual(first['id'],again['id'])
    await call('POST','/agent/runs',{**body,'payload':{'planning_mode':'fixed'}},409)
    await call('GET',f'/agent/runs/{first["id"]}',status=404,headers=other)
    await call('POST','/agent/runs',{**body,'request_id':str(uuid4())},404,headers=other)
+   from storyclaw.workflows.creation_plan import CreationPlan
+   plan=CreationPlan(goal='围绕失踪案、河灯规则和父子关系设计完整分卷，每卷推进不同冲突。',
+       sections=[{'name':'雾港来灯','brief':'河灯匠接到父亲留下的破灯，发现旧码头被隐瞒的航线，与商会发生冲突。'}],item_count=1,detail_words=600)
+   with patch('storyclaw.workflows.creation_plan.propose_plan',AsyncMock(return_value=plan)):
+    await poll_once()
+   first=await call('GET',f'/agent/runs/{first["id"]}')
+   self.assertEqual(first['status'],'waiting_author');self.assertIsNone(first['job_id'])
+   old_decision=first['decision']['id']
+   revision={'decision_id':old_decision,'feedback':'增加商会竞争线，保持一卷但展开到800字'}
+   await call('POST',f'/agent/runs/{first["id"]}/plan',revision,404,headers=other)
+   await call('POST',f'/agent/runs/{first["id"]}/plan',revision)
+   plan.detail_words=800
+   with patch('storyclaw.workflows.creation_plan.propose_plan',AsyncMock(return_value=plan)) as propose:
+    await poll_once()
+    self.assertIn('商会竞争线',propose.call_args.args[1]['feedback'])
+   first=await call('GET',f'/agent/runs/{first["id"]}')
+   self.assertNotEqual(first['decision']['id'],old_decision)
+   await call('POST',f'/agent/runs/{first["id"]}/decisions',{'decision_id':old_decision,'accept':True},409)
+   # Changed project inputs invalidate the plan until it is regenerated.
+   from app.models import Book
+   async with database.AsyncSessionLocal() as db:
+    b=await db.get(Book,bid);b.intro='新的商战方向与旧港秘密';await db.commit()
+   choice={'decision_id':first['decision']['id'],'accept':True}
+   await call('POST',f'/agent/runs/{first["id"]}/decisions',choice,409)
+   await call('POST',f'/agent/runs/{first["id"]}/plan',{'decision_id':choice['decision_id'],'feedback':'按更新的商战方向重新拟订'})
+   with patch('storyclaw.workflows.creation_plan.propose_plan',AsyncMock(return_value=plan)):await poll_once()
+   first=await call('GET',f'/agent/runs/{first["id"]}')
+   first=await call('POST',f'/agent/runs/{first["id"]}/decisions',{'decision_id':first['decision']['id'],'accept':True})
+   self.assertEqual(first['status'],'waiting_task');self.assertTrue(first['job_id'])
+   from app.models.product import WorkJob
+   async with database.AsyncSessionLocal() as db:
+    job=await db.get(WorkJob,first['job_id']);self.assertEqual(job.payload['creation_plan']['detail_words'],800)
+   from app.services.agent.job_progress import emit
+   await emit(first['job_id'],'tool.started',{'name':'query_memory','arguments':{'query':'商会'}})
+   await emit(first['job_id'],'tool.failed',{'name':'query_memory','error':'检索服务不可用'})
    events=await call('GET',f'/agent/runs/{first["id"]}/events')
    self.assertEqual([e['seq'] for e in events],list(range(1,len(events)+1)))
+   self.assertTrue(any(e['type']=='tool.failed' and e['payload'].get('error')=='检索服务不可用' for e in events))
    replay=await call('GET',f'/agent/runs/{first["id"]}/events?after_seq={events[-1]["seq"]}')
    self.assertEqual(replay,[])
    await call('POST',f'/agent/runs/{first["id"]}/cancel')

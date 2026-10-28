@@ -52,6 +52,8 @@ async def usage_scope(uid,job_id=None,plan_id=None,run_id=None):
     async def reserve(model,ins,outs):
         amount=price(model,ins,outs);rate_snapshot=pricing_snapshot(model)
         async with AsyncSessionLocal() as db:
+            from app.services.writing.revisions import assert_job_lease
+            await assert_job_lease(db)
             if run_id:
                 from app.models.agent import AgentRun
                 run=await db.scalar(select(AgentRun).where(AgentRun.id==run_id,AgentRun.user_id==uid).with_for_update())

@@ -101,9 +101,6 @@ async def generate_chapter(cid: int, data: ChapterGenerateIn,
     await db.refresh(c)
     await db.refresh(am)
     await db.refresh(u2)
-    # 后台同步：从本章内容提取并更新 角色/场景/物品/情节 设定
-    from app.services.writing.setting_sync import launch as launch_setting_sync
-    launch_setting_sync(b.id, c.id, u.id, model_choice)
     return ChapterGenerateOut(
         chapter_id=c.id, title=c.title, content=content, word_count=c.word_count,
         model=model_id, in_tokens=in_t, out_tokens=out_t, credits_cost=cost,
@@ -246,10 +243,6 @@ async def generate_chapter_stream(cid: int, data: ChapterGenerateIn,
                     "review_feedback": final.get("review_feedback", ""),
                 }
             yield sse("done", done_payload)
-            # 后台同步：从本章内容提取并更新 角色/场景/物品/情节 设定
-            if done_payload:
-                from app.services.writing.setting_sync import launch as launch_setting_sync
-                launch_setting_sync(b.id, cid, u.id, model_choice)
         except asyncio.CancelledError:
             task.cancel()
             raise

@@ -32,15 +32,26 @@ def canonical_skill(name: str) -> str:
 
 
 def method_instructions(name: str) -> str:
-    sections = read_skill_sections(name, ("method", "constraints"))
-    result="\n\n".join(f"[{key}]\n{value}" for key,value in sections.items() if value)
-    refs=describe_skill(name).get('reference_files',[])
+    """编译当前任务的方法，不把整套参考材料塞入每次模型调用。"""
+    sections = read_skill_sections(name, ("parameters", "method", "constraints", "output"))
+    result = "\n\n".join(f"[{key}]\n{value}" for key, value in sections.items() if value)
+    meta = describe_skill(name)
+    refs = meta.get('reference_files', [])
+    routes = meta.get('instruction_references', {})
+    # 沿用旧名识别修订、续写和对白模式；同一方法不意味着同一份任务参考。
     preferred={'modify-chapter':'references/revise.md','write-chapter':'references/write.md',
         'continue-writing':'references/continue.md','polish-chapter':'references/polish.md',
         'scene-enhance':'references/scene.md','dialogue-polish':'references/dialogue.md'}.get(name)
-    for reference in ([preferred] if preferred and preferred in refs else refs[:1]):
-        text=read_skill_reference(name,reference)
-        if text:result+='\n\n[创作参考]\n'+text
+    selected = routes.get(name, routes.get('default'))
+    if selected is None:  # 没有新路由字段的自定义 Skill 保持原有加载行为。
+        selected = [preferred] if preferred and preferred in refs else refs[:1]
+    for reference in dict.fromkeys(selected):
+        if reference not in refs:
+            raise ValueError(f'Skill 注入参考未登记：{name}/{reference}')
+        text = read_skill_reference(name, reference)
+        if not text:
+            raise ValueError(f'Skill 注入参考不可读取：{name}/{reference}')
+        result += f'\n\n[创作参考：{reference}]\n{text}'
     return result
 
 
@@ -74,7 +85,9 @@ def describe_skill(skill_name: str) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     result.update(available=True, requested_name=skill_name, version=manifest.get("version", 1),
                   content_hash=_method_hash(path), kind="method",
-                  compatible_capabilities=manifest.get("compatible_capabilities",[]), reference_files=manifest.get("reference_files",[]))
+                  compatible_capabilities=manifest.get("compatible_capabilities",[]),
+                  reference_files=manifest.get("reference_files",[]),
+                  instruction_references=manifest.get("instruction_references",{}))
     return result
 
 
@@ -93,6 +106,7 @@ _SECTION_ALIASES: dict[str, tuple[str, ...]] = {
     "constraints": ("constraints", "约束", "注意事项", "规则"),
     "output": ("output", "输出", "输出格式"),
     "description": ("description", "描述", "简介"),
+    "parameters": ("parameters", "参数", "输入"),
 }
 
 

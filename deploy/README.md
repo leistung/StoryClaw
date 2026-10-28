@@ -9,6 +9,8 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 当前 Compose 是支持热更新的开发编排。正式生产镜像、HTTPS、备份等仍需单独配置，不能将开发服务直接当成生产验收结果。
 
+Worker默认按可见CPU和内存估算WorkJob并发，可通过`WORKER_JOB_CONCURRENCY`覆盖；`WORKER_GLOBAL_JOB_CONCURRENCY=0`表示没有额外集群总量上限。支持`docker compose --env-file .env -f deploy/docker-compose.yml up -d --scale worker=2 worker`增加副本，资源配额、SQL连接和供应商容量需同时规划，见[配置说明](../docs/02-本地运行与配置.md)。这不影响作品归属权限，也不允许共同编辑他人的书。
+
 - `docker-compose.yml`：API、Worker、两个前端及数据库依赖。
 - `backend.Dockerfile`：安装独立 Harness，再安装平台代码。
 - `frontend.Dockerfile`、`admin-frontend.Dockerfile`：两个前端的开发镜像。

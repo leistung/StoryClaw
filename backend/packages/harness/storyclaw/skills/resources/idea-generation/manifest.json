@@ -1,7 +1,7 @@
 {
   "id": "idea-generation",
-  "version": 1,
-  "description": "创意发散",
+  "version": 2,
+  "description": "围绕作者题材、受众体验和限制发散可比较的故事创意、困局与发展方向，提供有具体矛盾和代价的候选，不将候选写成已采用事实。",
   "kind": "method",
   "trust": "platform",
   "compatible_capabilities": [
@@ -9,5 +9,10 @@
   ],
   "reference_files": [
     "references/alternatives.md"
-  ]
+  ],
+  "instruction_references": {
+    "default": [
+      "references/alternatives.md"
+    ]
+  }
 }

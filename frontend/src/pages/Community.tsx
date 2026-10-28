@@ -2,12 +2,8 @@ import { useState, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth'
-import {
-  listPosts,
-  searchCommunity,
-  createPost,
-  extractError,
-} from '@/lib/api'
+import { listPosts, searchCommunity, createPost } from '@/features/community/api'
+import { extractError } from '@/lib/http'
 import type { Post, PostInput, SearchResult } from '@/types'
 import {
   Search,

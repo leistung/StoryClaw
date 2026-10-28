@@ -12,23 +12,24 @@
 
 Skill不负责扣费、数据库写入或任务调度。Workflow可以加载Skill；Agent可以调用Workflow对应的能力，因此它们不是三份重复实现。
 
-## 两条执行路径
+## 作者入口与内部执行路径
+
+工作台 AI 按钮先准备右侧助手草稿，作者修改并发送后，由主 Agent 选择能力；按钮不直接开始付费生成。内部仍保留明确 command 调用，供确定性工作流和兼容接口复用。
 
 ```mermaid
 flowchart TD
-    A[用户操作] --> B{明确按钮还是自然语言}
-    B -->|按钮命令| C[验证能力输入]
-    B -->|自然语言| D[主Agent有界决策]
-    D --> C
-    C --> E[平台端口校验权限与依赖]
-    E --> F[读取或提交持久任务]
-    F --> G[专业Workflow / LangGraph]
-    G --> H[调用模型并加载写作方法]
-    H --> I[候选或版本化结果]
-    I --> J[需要时等待作者确认]
+    A[工作台 AI 按钮] --> B[准备可编辑需求和正文引用]
+    B --> C[作者在右侧助手发送]
+    D[作者直接输入] --> C
+    C --> E[主 Agent 选择能力]
+    E --> F[平台校验归属、版本和前提]
+    F --> G[读取资料、返回候选或提交生成计划]
+    G --> H[需要时等待作者确认]
+    H --> I[专业 Workflow / Graph 使用对应 Skill]
+    I --> J[生成、审查与版本化结果]
 ```
 
-明确点击“生成章纲”没有必要先让主模型猜意图，可以直接走command。自然语言入口才需要主循环协调。首页选题有自己的专用流程，并非所有旧接口都强制绕一遍主Loop；最终复用生成、权限和计量能力。
+首页开书讨论保留专门的访谈流程。无论入口怎样组织，Skill 都只提供专业方法，不取得保存、确认、扣费或发布权限。
 
 ## 主循环的实际约束
 
@@ -42,15 +43,42 @@ flowchart TD
 
 `tools/writing.py`定义写作工具和有界工具循环。`workflows/`包含总纲、章纲、设定、场景、来源处理等专业逻辑；`runtime/execution.py`提供实际执行与流。后端仍负责落库、版本保护、任务和费用。
 
-## 11份内置写作方法
+## 11 份内置写作方法（2026-10-27 重写）
 
-核心8份：`framework-design`、`world-design`、`character-arc`、`plot-design`、`chapter-craft`、`prose-editing`、`continuity-review`、`story-summarization`。
+11 个 SKILL.md、22 份参考材料和 11 个 manifest 已整体替换，方法版本升为 2。保留原标识、别名与调用能力映射；归档不是运行资源。正文方法每份约 1200–1600 字符，另有按子任务选择的详细材料；信息密度和任务适配优先于篇幅。
 
-按需3份：`idea-generation`、`naming`、`scene-and-dialogue`。
+| 方法入口 | 主要职责 |
+| --- | --- |
+| [framework-design](../backend/packages/harness/storyclaw/skills/resources/framework-design/SKILL.md) | 总纲、分卷、连载阶段与定长结构 |
+| [plot-design](../backend/packages/harness/storyclaw/skills/resources/plot-design/SKILL.md) | 章纲、场景任务、主支线与伏笔生命周期 |
+| [character-arc](../backend/packages/harness/storyclaw/skills/resources/character-arc/SKILL.md) | 人物档案、动机、关系、声音与弧光 |
+| [world-design](../backend/packages/harness/storyclaw/skills/resources/world-design/SKILL.md) | 世界规则、组织资源与可行动的空间 |
+| [chapter-craft](../backend/packages/harness/storyclaw/skills/resources/chapter-craft/SKILL.md) | 完整章节、具体行动与授权范围内修订 |
+| [continuity-review](../backend/packages/harness/storyclaw/skills/resources/continuity-review/SKILL.md) | 双端证据、知情边界、事件重复与最小修复 |
+| [story-summarization](../backend/packages/harness/storyclaw/skills/resources/story-summarization/SKILL.md) | 读者回顾、阶段记忆与来源化事实 |
+| [prose-editing](../backend/packages/harness/storyclaw/skills/resources/prose-editing/SKILL.md) | 选区语义保留、光标前后文与扩缩写 |
+| [scene-and-dialogue](../backend/packages/harness/storyclaw/skills/resources/scene-and-dialogue/SKILL.md) | 空间氛围、人物诉求、对白信息与潜台词 |
+| [idea-generation](../backend/packages/harness/storyclaw/skills/resources/idea-generation/SKILL.md) | 差异化创意、可持续冲突与方案收敛 |
+| [naming](../backend/packages/harness/storyclaw/skills/resources/naming/SKILL.md) | 命名对象、语感、区分度与剧透检查 |
 
-它们存于`storyclaw/skills/resources`，包括SKILL.md、manifest.json及references，随wheel安装。旧方法名通过alias转到当前方法，旧归档不会作为运行资源加载。
+每份方法包含用途与输入、具体方法、边界、输出要求和参考路由；参考包含工作单、判断示例和反例。已去掉固定分卷章数、短梗概上限、固定转折数等与当前生成计划冲突的模板。故事规模、字数和正式输出 schema 仍由作者选择及能力代码决定，Skill 不另建接口。
 
-方法内容具有版本/哈希。排队期间方法变更会触发校验；私人方法也只作为资料，不执行任意脚本。现有方法加载器不是给用户安装任意可执行插件的框架。
+### 两种加载方式
+
+- 专业 Workflow 调用 `method_instructions`：注入 Parameters、Method、Constraints、Output，以及 manifest 的 `instruction_references` 指定材料。内置模式每次预载一至两份参考；修订、润色、续写、场景与对白分别选材。旧自定义 Skill 没有该字段时沿用原加载方式。
+- 助手先用 `skills.list` 发现方法，再用 `skills.read` 读取主文档；需要细节时填写 `reference`，读取 `reference_files` 中的一份材料。不能读取任意路径、跨目录文件或未登记参考。
+
+```json
+{"name":"plot-design"}
+```
+
+```json
+{"name":"plot-design","reference":"references/plot-beats-reference.md"}
+```
+
+方法及参考内容共同参与版本哈希，变更参考也会触发资源版本变化。随 wheel 安装的文件必须与源码一致，不依赖运行工作目录。增加参考时，同时登记 manifest、主文档链接与需要自动注入的任务路由；不要把所有参考全文默认注入每次请求。
+
+方法是模型的工作指导，不是算法保证。人物状态持久化、Token 总预算和全书一致性校验仍需由代码和真实质量评估验证，不能仅凭重写 Skill 宣称已解决。
 
 ## 按这个顺序读源码
 

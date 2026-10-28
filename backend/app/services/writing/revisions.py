@@ -7,6 +7,21 @@ from app.models.product import ChapterRevision
 from app.models.product import WorkJob
 
 current_job_id = ContextVar('current_job_id', default=None)
+# Immutable per-execution owner; ContextVar isolates simultaneously running users.
+current_job_owner = ContextVar('current_job_owner', default=None)
+
+async def assert_job_lease(db, *, lock=False):
+    owner = current_job_owner.get()
+    if owner is None:
+        return
+    from datetime import datetime, timezone
+    query = select(WorkJob.status, WorkJob.started_at, WorkJob.lease_until).where(WorkJob.id == owner[0])
+    if lock:
+        query = query.with_for_update()
+    row = (await db.execute(query)).one_or_none()
+    if not row or row.status != 'running' or row.started_at != owner[1] or not row.lease_until or row.lease_until <= datetime.now(timezone.utc):
+        raise HTTPException(409, '任务执行租约已失效，已停止新的调用和正文写入，请核对已有结果')
+
 
 def chapter_hash(chapter):
     return hashlib.sha256(json.dumps([chapter.title,chapter.content],ensure_ascii=False).encode()).hexdigest()
@@ -30,6 +45,7 @@ async def snapshot(db, chapter, source):
     db.add(ChapterRevision(chapter_id=chapter.id,title=chapter.title,content=chapter.content,word_count=chapter.word_count,content_hash=digest,source=source))
 
 async def guard_write(db,chapter,expected_hash,expected_context=None):
+    await assert_job_lease(db, lock=True)
     from app.models import Book
     book=await db.get(Book,chapter.book_id)
     await db.refresh(book,with_for_update=True)

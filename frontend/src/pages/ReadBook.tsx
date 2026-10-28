@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import {
-  getBookForRead,
-  listChaptersForRead,
-  getChapterForRead,
-} from '@/lib/api'
+import { getBookForRead, listChaptersForRead, getChapterForRead } from '@/features/reading/api'
 import type { ReadBook as ReadBookType, ReadChapter, ReadChapterDetail, ReadingConfigData } from '@/types'
 import {
   Settings,

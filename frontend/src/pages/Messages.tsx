@@ -1,15 +1,7 @@
 import { useState, useRef, useEffect, FormEvent } from 'react'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
-import {
-  listFriends,
-  listFriendRequests,
-  acceptFriendRequest,
-  rejectFriendRequest,
-  sendFriendRequest,
-  getConversation,
-  sendSocialMessage,
-  extractError,
-} from '@/lib/api'
+import { listFriends, listFriendRequests, acceptFriendRequest, rejectFriendRequest, sendFriendRequest, getConversation, sendSocialMessage } from '@/features/social/api'
+import { extractError } from '@/lib/http'
 import type { Friend, FriendRequest, SocialMessageData } from '@/types'
 import {
   Send,
@@ -335,7 +327,7 @@ function ConversationView({
                 <div className={`max-w-[70%] rounded-lg px-3 py-2 text-sm ${
                   mine ? 'bg-blue-600 text-white' : 'bg-white border'
                 }`}>
-                  <MessageBody msg={m} mine={mine} />
+                  <MessageBody msg={m} />
                   <div className={`text-[10px] mt-1 ${mine ? 'text-blue-100' : 'text-gray-400'}`}>
                     {formatTime(m.created_at)}
                   </div>
@@ -406,7 +398,7 @@ function ConversationView({
   )
 }
 
-function MessageBody({ msg, mine }: { msg: SocialMessageData; mine: boolean }) {
+function MessageBody({ msg }: { msg: SocialMessageData }) {
   if (msg.msg_type === 'image' && msg.attachment_url) {
     return (
       <img

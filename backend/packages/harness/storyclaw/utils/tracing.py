@@ -49,12 +49,17 @@ def trace_node(name: str) -> Callable:
         if inspect.iscoroutinefunction(fn):
             @wraps(fn)
             async def wrapper(state: dict[str, Any]):
+                from storyclaw.runtime.progress import progress
+                await progress('step.started',name,label={'writer':'生成或修订正文','reviewer':'检查字数、重复与修订要求'}.get(name,name))
                 start = time.perf_counter()
                 try:
                     out = await fn(state)
                 except Exception as e:
                     _error(name, e)
+                    await progress('step.failed',name,error=str(e)[:600])
                     raise
+                await progress('step.failed' if out.get('error') or out.get('status')=='error' else 'step.completed',name,duration_ms=round((time.perf_counter()-start)*1000),
+                               status=out.get('status'),review_feedback=out.get('review_feedback'),error=out.get('error'))
                 return _emit(name, start, state, out)
         else:
             @wraps(fn)

@@ -13,6 +13,7 @@ from app.models.product import WorkJob
 from app.services.writing.revisions import chapter_hash
 
 class JobInput(BaseModel):
+    creation_plan:dict|None=None
     planning_mode:Literal['serial','fixed']='serial'
     design_type:Literal['character','world','plot']='character'
     reviewed_hash:str=''
@@ -36,11 +37,17 @@ async def create_job(data:JobInput,u:User,db:AsyncSession,*,plan_id=None):
     payload=data.model_dump(exclude={'request_id'})
     if prior:
         if prior.payload.get('studio_plan')!=plan_id:raise HTTPException(409,'请求已用于其他计划范围')
-        original={k:v for k,v in prior.payload.items() if k not in ('base_hash','outline_hash','method_snapshot','studio_plan')}
-        for key in ('design_type','reviewed_hash','planning_mode'):original.setdefault(key,JobInput.model_fields[key].default)
+        original={k:v for k,v in prior.payload.items() if k not in ('base_hash','outline_hash','method_snapshot','studio_plan','plan_context_hash')}
+        for key in ('design_type','reviewed_hash','planning_mode','creation_plan'):original.setdefault(key,JobInput.model_fields[key].default)
         if original!=payload:raise HTTPException(409,'请求编号已用于不同任务')
         return job_out(prior)
     from app.services.writing.planning import require_outline
+    if data.creation_plan is not None:
+        from storyclaw.workflows.creation_plan import CreationPlan
+        payload['creation_plan']=CreationPlan.model_validate(data.creation_plan).model_dump()
+        from app.services.agent.creation_plans import plan_context
+        from storyclaw.workflows.serial import digest
+        payload['plan_context_hash']=digest(await plan_context(db,b))
     planning=await db.scalar(select(WorkJob.id).where(WorkJob.book_id==b.id,WorkJob.status.in_(['queued','running']),WorkJob.kind=='outline'))
     if planning:raise HTTPException(409,'本书大纲正在生成，请到任务中心查看进度')
     if data.kind=='outline':

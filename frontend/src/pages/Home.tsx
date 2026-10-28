@@ -1,11 +1,11 @@
-import IdeaDiscussion from '@/components/IdeaDiscussion'
+import IdeaDiscussion from '@/features/ideation/components/IdeaDiscussion'
 import { useState, useEffect } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth'
-import api, { extractError } from '@/lib/api'
+import api, { extractError } from '@/lib/http'
 import type { Book, BookInput, Stats } from '@/types'
-import { Plus, Sparkles, ArrowRight, Search, ArrowUp, ChevronRight, LayoutGrid, List, X, Feather as FeatherMark } from 'lucide-react'
+import { Plus, ArrowRight, Search, ArrowUp, ChevronRight, LayoutGrid, List, X, Feather as FeatherMark } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,7 +37,6 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false)
   const [fromProposal,setFromProposal]=useState(false)
   const [form, setForm] = useState<BookInput>(emptyForm)
-  const [idea, setIdea] = useState('')
   const [search, setSearch] = useState('')
   const [genre, setGenre] = useState('全部作品')
   const [listView, setListView] = useState(false)
@@ -46,7 +45,7 @@ export default function Home() {
   const { data: stats } = useQuery({queryKey:['stats'],queryFn:async () => (await api.get<Stats>('/books/stats')).data,refetchInterval:30000})
   const { data: books, isLoading, isError, refetch } = useQuery({queryKey:['books'],queryFn:async () => (await api.get<Book[]>('/books')).data,refetchInterval:30000})
   const openBook = (id:number, tab?:string) => navigate(`/workspace/${id}${tab ? '?tab='+encodeURIComponent(tab) : ''}`)
-  const start = (intro = idea, selectedGenre = form.genre) => { setFromProposal(false);setForm({...emptyForm, intro, genre:selectedGenre}); setError(''); setShowModal(true) }
+  const start = (intro = '', selectedGenre = form.genre) => { setFromProposal(false);setForm({...emptyForm, intro, genre:selectedGenre}); setError(''); setShowModal(true) }
   const recompute = (next:Partial<BookInput>) => { const merged={...form,...next}; if (merged.target_chapters>0 && (next.target_words!==undefined || next.target_chapters!==undefined)) merged.per_chapter_words=Math.round(merged.target_words/merged.target_chapters); setForm(merged) }
   const togglePlatform = (p:string) => recompute({platforms:form.platforms.includes(p) ? form.platforms.filter(x=>x!==p) : [...form.platforms,p]})
   const createMutation = useMutation({mutationFn:async () => (await api.post<Book>('/books',{...form,title:form.title.trim()})).data,onSuccess:b=>{if(fromProposal)sessionStorage.removeItem(`sc-ideation-${user?.id}`);qc.invalidateQueries({queryKey:['books']});qc.invalidateQueries({queryKey:['stats']});setShowModal(false);setForm(emptyForm);setError('');openBook(b.id)},onError:err=>setError(extractError(err,'创建失败'))})
